@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "predictive-coding-agent"
+version = "0.1.0"
+description = "A predictive-coding agent that learns to act for a delayed outcome by hindsight anticipation"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Zane Hooper" }]
+dependencies = ["torch>=2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+figures = ["matplotlib>=3.5"]
+
+[project.urls]
+Repository = "https://github.com/cabloo/predictive-coding-agent"
+
+[tool.setuptools]
+packages = ["pcagent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: runs the agent for a few thousand ticks (about a minute each on one core)"]
