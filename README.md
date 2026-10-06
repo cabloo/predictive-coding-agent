@@ -45,6 +45,7 @@ target for one prediction at one earlier moment, and the same learning rules as 
 - [Limits](#limits)
 - [Code map](#code-map)
 - [References](#references)
+- [License](#license)
 
 ## The task
 
@@ -434,3 +435,7 @@ Every default of `Agent(...)` is the value the results were run with; its docstr
 - Whittington, J. C. R., and Bogacz, R. (2017). An approximation of the error backpropagation algorithm in a
   predictive coding network with local Hebbian synaptic plasticity. *Neural Computation*, 29(5), 1229–1262.
   <https://doi.org/10.1162/NECO_a_00949>
+
+## License
+
+[MIT](LICENSE).

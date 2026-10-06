@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "A predictive-coding agent that learns to act for a delayed outcome by hindsight anticipation"
 readme = "README.md"
 requires-python = ">=3.9"
+license = { text = "MIT" }
 authors = [{ name = "Zane Hooper" }]
 dependencies = ["torch>=2.0"]
 
