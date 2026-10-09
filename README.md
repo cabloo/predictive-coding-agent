@@ -137,10 +137,12 @@ cost of that forecast through the learned forward mapping (compare Jordan and Ru
 forecast is functionally a value. [Reinforcement learning](docs/theory.md#reinforcement-learning)
 
 **Against predictive coding and active inference.** The agent keeps their outline: the senses drive the state
-only as prediction errors, every weight learns from a prediction error, the goals are preferences over an
-interoceptive observation, and no policies are compared. It is neither in textbook form. No free-energy
-functional is defined, action descends an explicit cost and not free energy, the cost is pragmatic only, and no
-error is weighted by an estimated precision.
+only as prediction errors, every weight learns from a prediction error, and no policies are compared. Its
+goals are prior preferences in form: the cost the movement descends is the expected negative log of a preferred
+density over the predicted fullness, which is the pragmatic value of Friston et al. (2015). It is neither in
+textbook form. The preferences steer only the movement and do not enter perception, so no free-energy functional
+is shared between the two, and none is defined. Nothing is epistemic, and no precision is estimated: the one on
+the setpoint is set by hand.
 [Predictive coding](docs/theory.md#predictive-coding) · [Active inference](docs/theory.md#active-inference)
 
 What may be worth a closer look:

@@ -129,9 +129,13 @@ p(z) = -\,w_1\, \mathrm{center}\big(\phi(z)\, C_\Delta\big) \;+\; g_a\, e(z)\, C
 ```
 
 It is minus the gradient, with respect to the state, of $`w_1\,\mathbb{E}[D(X)] + \tfrac{1}{2}\, g_a h\, e^2`$,
-with the variance held fixed. `center` removes the mean over the active units. The second term of that cost is
-$`\tfrac{1}{2}(g_a/h)\,(x^* - X^{ev})^2`$, so the fixed gain acts as a fixed precision of $`g_a/h = 32`$ on the
-setpoint (a standard deviation of about 0.18 in units of fullness). The weight of the first term is the
+with the variance held fixed. `center` removes the mean over the active units.
+
+Both terms are expected negative log preferences over a predicted fullness. $`\mathbb{E}[D(X)]`$ is, up to a
+constant, the expected negative log of a preferred density proportional to $`e^{-D(x)}`$, which is flat over the
+band. The second term is $`\tfrac{1}{2}(g_a/h)\,(x^* - X^{ev})^2`$, the negative log of a Gaussian centered on
+the setpoint, so the fixed gain acts as a fixed precision of $`g_a/h = 32`$ (a standard deviation of about 0.18
+in units of fullness). The weight of the first term is the
 one-tick forecast's share of the two forecasts' skill:
 
 ```math

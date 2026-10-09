@@ -72,20 +72,31 @@ Rigoli and Friston, 2015; Seth and Friston, 2016): a range for the fullness one 
 middle of that range, for the fullness expected at the next eventful moment. No reward enters. The movement is
 found while the state settles, with no separate actor and no comparison of policies.
 
+Both preferences are prior preferences in form. The cost the movement descends
+([equations](equations.md#the-movement)) is the expected negative log of a preferred density over the fullness
+the agent predicts, which is the negative of what Friston et al. (2015) call extrinsic or pragmatic value. For
+the range, the preferred density is flat over the comfort band and falls off outside it, and the expectation is
+taken under the forecast's learned normal density. For the point, it is a Gaussian centered on the band's middle
+with a precision of 32 (a standard deviation of about 0.18 in units of fullness), read at a point forecast.
+
 **Where it differs.**
 
-- No free-energy functional is defined. Active inference in its full form replaces cost functions with prior
-  beliefs (Friston, Samothrakis and Montague, 2012). This agent does not go that far: it has an explicit cost on
-  one observation.
-- Action descends that cost, not free energy. In the continuous formulation (Friston et al., 2010) action sees
+- The preferences steer only the movement. In active inference a prior belief about what will be sensed is part
+  of the free energy that perception minimizes too, so it also shapes the state estimate, and prior beliefs can
+  stand in for a cost function altogether (Friston, Samothrakis and Montague, 2012). Here the preferences are
+  not added to the units' drive, and what the agent perceives comes from a second settle that leaves them out.
+- No free-energy functional is defined. The settle is a relaxation driven by prediction errors, with competition
+  between units, and the preferences are not a term in what the state minimizes. Perception and action share no
+  single functional.
+- The shape of the band's preferred density, the precision of 32 and the weight between the two preferences are
+  set by hand. None is estimated.
+- Action descends the expected negative log preference, not free energy. In the continuous formulation (Friston et al., 2010) action sees
   only sensory prediction errors, and reflexes fulfill a predicted sensation. Here the movement is found by
   approximate gradient descent on the cost through a learned forward mapping. That is the forward-model
   construction of Jordan and Rumelhart (1992), with the gradient used to set the action itself and not to train
   a controller. The only thing it shares with the continuous formulation is that no policies are compared. The descent is 40 annealed steps on the unit circle, with the inhibition between units, the hold
   and the thresholds treated as fixed.
-- The cost is pragmatic only, in the terms of Friston et al. (2015): an expected cost of leaving the band under
-  the forecast's normal density, plus a squared error from the setpoint. No term seeks information.
-- The preferences act only on the movement. They do not bias the state the way a prior would.
+- Nothing is epistemic. The cost has the pragmatic term only, and no term seeks information.
 - The movement is a command that the body executes and reports back, not a predicted sensation.
 - No distribution over movements or over hidden causes is formed. The state and the movement are point
   estimates.
