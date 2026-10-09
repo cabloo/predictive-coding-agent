@@ -2,12 +2,12 @@
 
 The agent keeps a sparse internal state, predicts its next senses from it, and learns from its own prediction errors.
 Its preferences concern only its fullness: a range (a comfort band) one tick ahead, and the middle of that range at
-the next eventful moment. The movement it makes is inferred while the state settles, by following the slope of those
+the next eventful moment. The movement it makes is found while the state settles, by following the slope of those
 preferences. One extra forecast, of how much its fullness will change by the next eventful moment, lets them reach
 across a delay; the part of it read from the state is the anticipation, and a memory of the last eventful moment
 corrects it in hindsight.
 
-The comments name the parts as the README does, "Idea 1" to "Idea 12":
+The comments name the parts as docs/how-it-works.md does, "Idea 1" to "Idea 12":
 
     Idea 1   predict the next senses; the forecast learns by a normalized delta rule
     Idea 2   a sparse state of thresholded units with lateral inhibition
@@ -15,7 +15,7 @@ The comments name the parts as the README does, "Idea 1" to "Idea 12":
     Idea 4   the input weights learn from the forecast's error, sent back one step
     Idea 5   a second level predicts the first
     Idea 6   the comfort band, read under the forecast's uncertainty
-    Idea 7   the movement is inferred during the settle
+    Idea 7   the movement is found during the settle, by following the slope of the preferences
     Idea 8   the weights that forecast the change in fullness read a centered state
     Idea 9   one anticipation, read from the state and fed back into it on the next tick
     Idea 10  memory sets the anticipation's target at one remembered moment: the change in fullness that followed
@@ -28,6 +28,9 @@ Shapes: ``B`` bodies run in parallel and share every weight. What the agent sens
 are the states of the two levels of units and ``u1`` and ``u2`` their potentials before thresholding. Level 1 has two
 states per tick: ``z1`` from the settle that includes the goal, and ``z1_up``, the goal-free state, from the settle
 that does not.
+
+In the comments, "surprise" means a signed prediction error (what was sensed minus what was forecast), not the
+negative log probability of an observation. docs/equations.md gives every update below as an equation.
 """
 from __future__ import annotations
 
@@ -658,7 +661,7 @@ class Agent:
         top_down = self.z2 @ self.W2.t()
         self._update_hold(eps)
         u_prev = self.u1
-        # Idea 7: two settles. The first includes level 2's prediction and the goal, which turns the movement.
+        # Ideas 3 and 7: two settles. The first includes level 2's prediction and the goal, which turns the movement.
         # It gives the movement and the state the forecast reads.
         z1, m, u1 = self._settle1(base + top_down, intero, goal=True, m_fixed=None, u_prev=u_prev)
         # The second has neither, and the movement fixed: what the agent perceives, given what it did.

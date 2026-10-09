@@ -98,9 +98,9 @@ class CueGame:
 class TwoNeedGame:
     """Two needs (food and water), both offered every trial in two different directions, and room to overshoot.
 
-    The one answer is graded against each direction: pointing at one takes it, pointing between two that are
-    90 degrees apart takes half of each, pointing elsewhere takes nothing. Declining is possible and is needed,
-    because a bite can push a level above the band.
+    The one answer is graded against each direction as in the cue game: pointing at one takes all of it, pointing
+    between two that are 90 degrees apart takes half of each, and a direction 90 degrees or more from both takes
+    nothing. Declining is possible and is needed, because a bite can push a level above the band.
 
     The two leaks sum to a constant, but the split between them is redrawn every ``HOLD`` trials and held in
     between. That is what makes the body necessary: with equal leaks a fixed schedule that never reads the levels

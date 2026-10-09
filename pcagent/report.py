@@ -1,6 +1,8 @@
-"""Summarize a results file as the two tables in the README.
+"""Summarize a results file as the two tables in docs/results.md.
 
     python -m pcagent.report results/acceptance.json
+
+``summary_table`` gives the README's short table.
 
 A results file is ``{"cells": [{"game", "delay", "seed", "hindsight", "bar", "oracle", "floor", "diverged",
 "curve": [[tick, score], ...]}, ...]}``.
@@ -40,6 +42,24 @@ def main_table(cells):
             "≥ " if worst["censored"] else "", worst["R"],
             sum(x < c["bar"] for c, a in zip(group, after) for x in a), sum(len(a) for a in after),
             min(min(a) for a in after)))
+    return "\n".join(rows)
+
+
+def summary_table(cells):
+    """The README's short table: one row per game and delay, for the runs with hindsight on."""
+    rows = ["| Game | Delay (ticks) | Runs that mastered it and held it | Ticks to mastery, in each run |",
+            "|---|---|---|---|"]
+    keys = []
+    for c in cells:
+        if c["hindsight"] and (c["game"], c["delay"]) not in keys:
+            keys.append((c["game"], c["delay"]))
+    for game, delay in keys:
+        group = sorted((c for c in cells if c["hindsight"] and (c["game"], c["delay"]) == (game, delay)),
+                       key=lambda c: c["seed"])
+        holds = [scoring.hold_ratio(_curve(c), c["bar"]) for c in group]
+        rows.append("| %s | %d | %d of %d | %s |" % (
+            game, delay, sum(bool(h and h["held"]) for h in holds), len(group),
+            ", ".join("never" if h is None else "{:,}".format(h["ttm"]) for h in holds)))
     return "\n".join(rows)
 
 
