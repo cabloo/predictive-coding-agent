@@ -2,9 +2,9 @@
 
 The agent keeps a sparse internal state, predicts its next senses from it, and learns from its own prediction errors.
 Its only preference is a range (a comfort band) for its fullness. The movement it makes is inferred while the state
-settles, by following the slope of that preference. One extra predicted quantity, an anticipation of how its fullness
-will fare compared with what is usual, lets the preference reach across a delay; a memory of the last eventful moment
-corrects that anticipation in hindsight.
+settles, by following the slope of that preference. One extra predicted quantity, an anticipation of how much its
+fullness will change by the next eventful moment, lets the preference reach across a delay; a memory of the last
+eventful moment corrects that anticipation in hindsight.
 
 The comments name the parts as the README does, "Idea 1" to "Idea 12":
 
@@ -17,10 +17,10 @@ The comments name the parts as the README does, "Idea 1" to "Idea 12":
     Idea 7   the movement is inferred during the settle
     Idea 8   the weights that forecast the change in fullness read a centered state
     Idea 9   one anticipation, read from the state and fed back into it on the next tick
-    Idea 10  memory sets the anticipation's target at one remembered moment
-    Idea 11  the band reads fullness + forecast change + anticipation as one quantity, its lower edge at the trough
-    Idea 12  regulators: attention, a learning-rate gate, a hold on ticks with little surprise, and thresholds that
-             weigh each tick by its surprise
+    Idea 10  memory sets the anticipation's target at one remembered moment: the change in fullness that followed
+    Idea 11  the anticipation has a setpoint of its own: fullness at the next moment should sit at the band's middle
+    Idea 12  regulators: attention, a learning-rate gate, a hold on ticks with little surprise, thresholds that
+             weigh each tick by its surprise, and running averages that no single outcome can rewrite
 
 Shapes: ``B`` bodies run in parallel and share every weight. What the agent senses on a tick is one vector,
 ``[sight | last movement | fullness | change in fullness]``. In the code ``level`` is the fullness. ``z1`` and ``z2``
@@ -95,6 +95,8 @@ class Agent:
         step_limit: the largest step of the anticipation's weights, as a share of their size plus one (Idea 10).
         anticipation_gain: the push has two terms, one through the weights that forecast the next change and one
             through the anticipation's weights; this multiplies the second (Idea 11).
+        sample_cap: the most one outcome's squared surprise counts for, in units of the running average it is
+            folded into (Idea 12).
         skill_offset: a constant added to the one-tick forecast's skill when the push weighs the first term
             against the second (Idea 11).
         attention_gain, attention_cap: slope and ceiling of the attention gain (Idea 12).
@@ -103,7 +105,7 @@ class Agent:
             (Idea 12).
         init_scale: scale of the forecast weights at birth.
         hindsight: False switches memory's corrections off, as a control. Memory still records moments, outcomes
-            and its statistics, but corrects no weight, so the anticipation stays at zero.
+            and its statistics, but corrects no weight, so the anticipation and its forecast stay at zero.
         device: where the tensors live. The results were run on the CPU.
 
     Attributes worth reading from outside:
@@ -122,7 +124,7 @@ class Agent:
                  hindsight_rate: float = 3.0, step_limit: float = 0.005, anticipation_gain: float = 8.0,
                  skill_offset: float = 0.05, attention_gain: float = 3.0, attention_cap: float = 10.0,
                  gate_floor: float = 1.0, hold_max: float = 0.9, hold_steepness: float = 3.0,
-                 init_scale: float = 0.1, hindsight: bool = True, device: str = "cpu"):
+                 sample_cap: float = 10.0, init_scale: float = 0.1, hindsight: bool = True, device: str = "cpu"):
         if int(extero_dim) < 1 or int(proprio_dim) < 1 or int(intero_dim) < 1:
             raise ValueError("extero_dim, proprio_dim and intero_dim must each be >= 1")
         widths = tuple(int(w) for w in widths)
@@ -134,6 +136,8 @@ class Agent:
             raise ValueError("settle_steps >= 1 and settle_rate in (0, 1] required")
         if max(float(forecast_lr), float(perception_lr)) > 1.0:
             raise ValueError("forecast_lr and perception_lr must be <= 1 (the gate's ceiling is 1 / the larger)")
+        if not float(sample_cap) > 1.0:
+            raise ValueError("sample_cap must exceed 1")
         self.extero_dim, self.proprio_dim, self.intero_dim = int(extero_dim), int(proprio_dim), int(intero_dim)
         self.widths, self.device = widths, device
         self.band_lo, self.band_hi = float(band_lo), float(band_hi)
@@ -152,6 +156,7 @@ class Agent:
         self.gate_floor = float(gate_floor)
         self.gate_max = min(10.0, 1.0 / max(max(self.forecast_lr, self.perception_lr), 1e-12))
         self.hold_max, self.hold_steepness = float(hold_max), float(hold_steepness)
+        self.sample_cap = float(sample_cap)
         self.nlms_floor = 1e-3                       # floor on a unit's gain in the input-weight steps (both levels)
         self.hindsight = bool(hindsight)
 
@@ -173,7 +178,8 @@ class Agent:
         self.K2, self.A2 = K2.to(device), A2.to(device)
         self.Ka = torch.zeros(n1, i, device=device)                                      # input from the anticipation
         self.Ca = torch.zeros(i, n1, device=device)                                      # the anticipation's weights
-        self.ca0 = torch.zeros(i, device=device)
+        self.from_level = torch.zeros(i, 2, device=device)   # the part of the outcome the fullness alone forecasts:
+                                                             # [slope, offset] per need (Idea 10)
         self.Wv = torch.zeros(i, n1, device=device)                                      # variance of the change
         self.bv = torch.full((i,), math.log(0.001), device=device)
         self.c0 = torch.zeros(self.n_s, device=device)
@@ -193,11 +199,8 @@ class Agent:
         self.ant_power = None                   # running mean power of the anticipation
         self.gate = 1.0                         # the learning-rate gate
         self.gate_fast, self.gate_slow = None, None
-        self.usual = torch.zeros(i, 2, device=device)   # the usual change in fullness per tick: [slope, offset]
-        self.leak = torch.zeros(i, 2, device=device)    # the same fit on bodies that wrote no moment: the bare leak
         self.news_q = None                      # running news per sight / movement channel
-        self.write_rate = None                  # running share of bodies writing a moment
-        self.outcome_stats = None               # the outcome's running mean, variance, and the anticipation's error
+        self.outcome_stats = None               # the outcome's running mean, variance, and the forecast's error
         self.diverged = False
         self.info: dict = {}
         self._B = None
@@ -218,8 +221,9 @@ class Agent:
         self.mem_z, self.mem_zp = z(B, n1), z(B, n1)
         self.mem_eps, self.mem_mov = z(B, self.n_s), z(B, self.proprio_dim)
         self.mem_ant = z(B, self.intero_dim)
+        self.mem_level = z(B, self.intero_dim)         # the fullness at the remembered moment
         self.mem_has = torch.zeros(B, dtype=torch.bool, device=self.device)
-        self.mem_G = z(B, self.intero_dim)
+        self.mem_G = z(B, self.intero_dim)             # the change in fullness since that moment
 
     # ------------------------------------------------------------------ Idea 6: the comfort band
     def _expected_slope(self, mean, var):
@@ -242,14 +246,7 @@ class Agent:
     def _forecast_var(self, z1):
         return torch.exp((z1 @ self.Wv.t() + self.bv).clamp(LOG_VAR_MIN, LOG_VAR_MAX))
 
-    # ------------------------------------------------------------------ Idea 11: one read, at the trough
-    def _trough_factor(self):
-        """How much of a level is left by the time the next moment arrives, per need (None before the first tick)."""
-        if self.write_rate is None:
-            return None
-        nbar = 1.0 / max(self.write_rate, memory.STAT_RATE)
-        return (1.0 + self.leak[:, 0]).clamp(0.0, 1.0) ** nbar
-
+    # ------------------------------------------------------------------ Idea 11: the anticipation's own setpoint
     def _one_tick_weight(self):
         """The weight of the push's first term: the one-tick forecast's skill (plus ``skill_offset``) as a share of
         the two skills together."""
@@ -260,36 +257,39 @@ class Agent:
             tot = tot + float(((v - e).clamp_min(0.0) / (v + 1e-08)).mean())
         return (s1 + self.skill_offset) / (tot + self.skill_offset)
 
-    def _push_context(self):
+    def _push_context(self, level):
         """Everything the push needs that does not change while the state settles."""
         Cd = self.C[self.i_d]
-        var_a = self.outcome_stats[1] if self.outcome_stats is not None \
-            else torch.zeros(self.Ca.shape[0], device=self.Ca.device)
         return {"Cd": Cd, "CdT": Cd.t(), "WvT": self.Wv.t(), "c0d": self.c0[self.i_d], "CaT": self.Ca.t(),
-                "var_a": var_a, "kappa": self._trough_factor(), "w1": self._one_tick_weight()}
+                "w1": self._one_tick_weight(),
+                "from_level": level * self.from_level[:, 0] + self.from_level[:, 1],
+                "middle": 0.5 * (self.band_lo + self.band_hi), "half_width": 0.5 * (self.band_hi - self.band_lo)}
 
     def _push(self, z1, level, ctx):
-        """Which units, if more active, would bring the band's read back toward the band.
+        """Which units, if more active, would bring the agent's two reads back toward their setpoints.
+
+        The first term is the comfort band read on fullness + the forecast of the next change (Idea 6). The second
+        is the anticipation's own setpoint (Idea 11): fullness at the next eventful moment, which is the fullness
+        now plus the forecast change until then, should sit at the band's middle. Its error is counted in
+        half-widths of the band and goes through the anticipation's weights.
 
         The result is used only to turn the movement (see ``_settle1``); it is not added to the units' input.
         """
         f = _center(z1) @ ctx["CdT"]
         f = f + ctx["c0d"]
         var = torch.exp((z1 @ ctx["WvT"] + self.bv).clamp(LOG_VAR_MIN, LOG_VAR_MAX))
-        X = level + f
-        X = X + (z1 @ ctx["CaT"] + self.ca0)             # level + forecast change + anticipation: ONE quantity
-        var = var + ctx["var_a"]
-        slope = self._expected_slope(X, var)
-        if ctx["kappa"] is not None:                     # the lower edge is read where the level will bottom out
-            low = self._expected_slope(ctx["kappa"] * X, ctx["kappa"] * ctx["kappa"] * var)
-            slope = ctx["kappa"] * low.clamp_max(0.0) + slope.clamp_min(0.0)
+        slope = self._expected_slope(level + f, var)
         push = -slope @ ctx["Cd"]
         push = ctx["w1"] * push
         fired = (z1 > 0).to(z1.dtype)                    # Idea 8: the first term loses its mean over active units
         push = push - (fired * push).sum(-1, keepdim=True) / fired.sum(-1, keepdim=True).clamp_min(1.0)
-        through_anticipation = slope @ self.Ca
+        ahead = z1 @ ctx["CaT"]                          # the forecast change until the next moment: the state's
+        ahead = ahead + ctx["from_level"]                # part and the fullness's part
+        error = ctx["middle"] - (level + ahead)
+        error = error / ctx["half_width"]
+        through_anticipation = error @ self.Ca
         through_anticipation = self.anticipation_gain * through_anticipation
-        return push - through_anticipation
+        return push + through_anticipation
 
     # ------------------------------------------------------------------ Ideas 2, 3, 7: settling
     def _fire(self, u, layer):
@@ -337,7 +337,7 @@ class Agent:
         if m_fixed is not None:
             b_fixed = base + _direction(m_fixed) @ KmT
         zf = (z > 0).to(z.dtype)
-        ctx = self._push_context() if goal else None
+        ctx = self._push_context(level) if goal else None
         for k in range(self.settle_steps):
             if b_fixed is not None:
                 b = b_fixed
@@ -411,12 +411,17 @@ class Agent:
         return min(self.gate_max, max(self.gate_floor, self.gate_max * abs(u - 1.0)))
 
     def _gate_fold(self, x):
+        """Fold one outcome's squared surprise into the gate's two averages, each taking it at no more than
+        ``sample_cap`` times its own value."""
         if self.gate_fast is None:
             self.gate_fast, self.gate_slow = x, x
             return
         r = STAT_RATE / 10.0
-        self.gate_fast = (1.0 - STAT_RATE) * self.gate_fast + STAT_RATE * x
-        self.gate_slow = (1.0 - r) * self.gate_slow + r * x
+        cap = self.sample_cap
+        x_fast = min(x, cap * self.gate_fast) if self.gate_fast > 0.0 else x
+        x_slow = min(x, cap * self.gate_slow) if self.gate_slow > 0.0 else x
+        self.gate_fast = (1.0 - STAT_RATE) * self.gate_fast + STAT_RATE * x_fast
+        self.gate_slow = (1.0 - r) * self.gate_slow + r * x_slow
 
     # ------------------------------------------------------------------ Ideas 1, 4, 6, 9: learning from the last tick
     @staticmethod
@@ -510,8 +515,9 @@ class Agent:
 
     # ------------------------------------------------------------------ Ideas 9, 10: anticipation and memory
     def _anticipate(self, z1):
-        """The anticipation: how the fullness will change until the next eventful moment, beyond what is usual."""
-        return z1 @ self.Ca.t() + self.ca0
+        """The anticipation: the state's part of the forecast of how much the fullness will change by the next
+        eventful moment (the other part is read from the fullness itself, ``from_level``)."""
+        return z1 @ self.Ca.t()
 
     def _anticipation_input(self, level):
         """The value fed back into the state: the anticipation read from last tick's goal-free state, limited in
@@ -524,6 +530,8 @@ class Agent:
         return torch.maximum(torch.minimum(a, R), -R)
 
     def _update_outcome_stats(self, target, err):
+        """The outcome's running mean and variance, and the forecast's running squared error. The squared error
+        of one closing enters at no more than ``sample_cap`` times the running value (Idea 12)."""
         b = STAT_RATE
         e2 = (err ** 2).mean(0)
         if self.outcome_stats is None:
@@ -531,23 +539,23 @@ class Agent:
         else:
             mu, v, e = self.outcome_stats
             mu = (1.0 - b) * mu + b * target.mean(0)
-            self.outcome_stats = [mu, (1.0 - b) * v + b * ((target - mu) ** 2).mean(0), (1.0 - b) * e + b * e2]
+            capped = torch.where(e > 0, torch.minimum(e2, self.sample_cap * e), e2)
+            self.outcome_stats = [mu, (1.0 - b) * v + b * ((target - mu) ** 2).mean(0), (1.0 - b) * e + b * capped]
 
     def _correct_anticipation(self, err, closing):
-        """Idea 10: the anticipation's weights step toward the outcome at the remembered moment, by the delta
-        rule, at ``hindsight_rate`` times the forecast's rate and with a limit on the step."""
+        """Idea 10: the anticipation's weights step by the surprise at the remembered moment (the outcome minus what
+        that moment forecast), by the delta rule, at ``hindsight_rate`` times the forecast's rate and with a limit
+        on the step."""
         B = err.shape[0]
         lr = self.forecast_lr * self.hindsight_rate
         lr = lr * self.gate
         zs = self.mem_z[closing]
         dC = lr * err[closing].t() @ zs / B / (1e-06 + float((zs ** 2).sum(-1).mean()))
-        dc0 = lr * err[closing].sum(0) / B
         nC = torch.linalg.vector_norm(self.Ca, dim=-1)
         nd = torch.linalg.vector_norm(dC, dim=-1)
         sc = torch.where(nd > 0, (self.step_limit * (nC + 1.0) / nd.clamp_min(1e-12)).clamp(max=1.0),
                          torch.ones_like(nd))                            # the step limit, per need
         self.Ca = self.Ca + dC * sc.unsqueeze(-1)
-        self.ca0 = self.ca0 + dc0 * sc
 
     def _correct_perception(self, err, closing, Ca_old):
         """Idea 10: the same error, sent back through the anticipation's weights, trains the input weights that
@@ -572,43 +580,36 @@ class Agent:
     def _memory_tick(self, o, eps, level, z1_up, m, ant):
         """One tick of memory, after both settles.
 
-        1. Every body adds to its open outcome this tick's change in fullness beyond the usual change at its level.
-           The fit of the usual change (across the bodies, on every tick) then takes a step. Because it is fitted
-           on every tick, it holds the leak and also the feeding that has been usual lately, so an outcome is
-           positive after more food than usual and negative after less.
+        1. Every body adds this tick's change in fullness to its open outcome. The outcome of a moment is the whole
+           change in fullness from that moment to the next one: the leak, and whatever was eaten.
         2. A body whose sight or movement carries news writes a moment.
-        3. A writing body that already holds a moment closes it: the surprise is the outcome against what that
-           moment anticipated. That surprise corrects the anticipation's weights and, sent back one step, the
-           input weights that formed the remembered state. Nothing else is corrected.
-        4. The writing bodies store the new moment (the goal-free state and the inputs that formed it) and start a
-           new outcome.
+        3. A writing body that already holds a moment closes it. What that moment forecast has two parts: one read
+           from the fullness at the moment (a line, ``from_level``) and one read from the remembered state (the
+           anticipation). The surprise is the outcome against their sum. It corrects the anticipation's weights
+           and, sent back one step, the input weights that formed the remembered state; the line is refitted to
+           the outcomes themselves, so the anticipation is left with what the fullness alone does not tell.
+           Nothing else is corrected.
+        4. The writing bodies store the new moment (the goal-free state, the inputs that formed it and the
+           fullness) and start a new outcome.
         """
         if self.l_prev is not None:
-            r = memory.beyond_usual(level, self.l_prev, self.usual)
-            self.mem_G = self.mem_G + r
-            self.usual = memory.fit_step(self.usual, r, self.l_prev)
+            self.mem_G = self.mem_G + (level - self.l_prev)
         news_channels = list(range(self.n_s))[self.i_e] + list(range(self.n_s))[self.i_p]
         s, self.news_q = memory.news(eps[:, news_channels], (o - self.skill_stats[0])[:, news_channels], self.news_q)
         write = s >= memory.WRITE_BAR
-        # Idea 11's statistics: how often moments come, and the bare leak (the same fit on bodies without news)
-        x = float(write.to(torch.float32).mean())
-        self.write_rate = x if self.write_rate is None \
-            else (1.0 - memory.STAT_RATE) * self.write_rate + memory.STAT_RATE * x
-        quiet = ~write
-        if self.l_prev is not None and int(quiet.sum()) >= 2:
-            rq = memory.beyond_usual(level[quiet], self.l_prev[quiet], self.leak)
-            self.leak = memory.fit_step(self.leak, rq, self.l_prev[quiet])
         closing = write & self.mem_has
         if bool(closing.any()):
-            anticipated = self._anticipate(self.mem_z)
+            by_level = self.mem_level * self.from_level[:, 0] + self.from_level[:, 1]
+            forecast = self._anticipate(self.mem_z) + by_level
             target = self.mem_G.clone()
-            err = torch.where(closing.unsqueeze(-1), target - anticipated, torch.zeros_like(anticipated))
+            err = torch.where(closing.unsqueeze(-1), target - forecast, torch.zeros_like(forecast))
             Ca_old = self.Ca
             self._update_outcome_stats(target[closing], err[closing])
             self._gate_fold(float((err[closing] ** 2).mean()))
             if self.hindsight:
                 self._correct_anticipation(err, closing)
                 self._correct_perception(err, closing, Ca_old)
+                self.from_level = memory.fit_step(self.from_level, (target - by_level)[closing], self.mem_level[closing])
             self.info["surprise_rms"] = float((err[closing] ** 2).mean().sqrt())
         idx = write.nonzero(as_tuple=True)[0]
         if idx.numel():
@@ -617,6 +618,7 @@ class Agent:
             self.mem_mov[idx] = _direction(m)[idx]
             self.mem_zp[idx] = self.z1[idx]
             self.mem_ant[idx] = ant[idx]
+            self.mem_level[idx] = level[idx]
             self.mem_has[idx] = True
             self.mem_G[idx] = 0.0
 
@@ -683,9 +685,9 @@ class Agent:
         return m.detach().clone()
 
     # ------------------------------------------------------------------ checkpoints
-    _TENSORS = ("C", "c0", "K", "Km", "A", "Ka", "W2", "K2", "A2", "Wv", "bv", "Ca", "ca0", "usual", "leak")
+    _TENSORS = ("C", "c0", "K", "Km", "A", "Ka", "W2", "K2", "A2", "Wv", "bv", "Ca", "from_level")
     _OPTIONAL = ("var_ebar", "hold_mbar", "level_lo", "level_hi", "news_q")
-    _SCALARS = ("ant_power", "gate_fast", "gate_slow", "write_rate")
+    _SCALARS = ("ant_power", "gate_fast", "gate_slow")
 
     def state_dict(self) -> dict:
         """The learned weights and running statistics (not the per-body state)."""

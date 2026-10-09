@@ -10,12 +10,13 @@ Gray (five panels): the same agent with its memory's corrections switched off, o
 bar.*
 
 **What it does.** A body has a fullness level that leaks away. A cue says which way to move, and the right move
-is paid with food up to 16 ticks later, with nothing to see in between. The agent prefers one thing only: that
-its fullness stays inside a range. Starting from random weights, it learns to answer the cue and keeps doing so.
+is paid with food up to 16 ticks later, with nothing to see in between. The agent's only goal concerns its own
+fullness: keep it inside a range, and steer toward the middle of that range further ahead. Starting from random
+weights, it learns to answer the cue and keeps doing so.
 All 27 runs (9 combinations of game and delay, 3 random seeds each) reached the pass bar in 1,000 to 13,000
 ticks. The bar is 90% of the way from the best policy that ignores what the game is about to a hand-written
 perfect one. No run lost it afterwards (three 1,000-tick windows in a row below the bar) for as long as it ran,
-100,000 ticks or more. At two of the nine combinations, one or two windows at a time dipped below the bar.
+100,000 ticks or more. In all runs together, one window dipped below the bar after mastery.
 
 **How it is built.** About 700 lines of plain tensor code in [`pcagent/agent.py`](pcagent/agent.py), run on one
 CPU core. No reward comes from the environment: the only outcome the agent learns from is the change in its own
@@ -27,11 +28,12 @@ step through the forecast weights.
 
 **The idea, in one paragraph.** The agent's forecast looks one tick ahead, and one-tick errors do not connect a
 movement to food that arrives eight ticks later. So the agent predicts one more quantity, an *anticipation*:
-how its fullness will fare until the next eventful moment (a tick whose sight it did not predict), compared with
-what is usual. A small memory holds the last eventful moment. When the next one arrives, the agent knows how its
-fullness actually fared in between, and in hindsight it corrects what the remembered moment should have
-anticipated. The remembered moment is read for that correction only, and it never picks a movement. It sets a
-target for one prediction at one earlier moment, and the same learning rules as everywhere else do the rest.
+how much its fullness will change by the next eventful moment (a tick whose sight it did not predict). A small
+memory holds the last eventful moment. When the next one arrives, the agent knows how much its fullness actually
+changed in between, and in hindsight it corrects what the remembered moment should have forecast. The agent then
+asks one thing of that forecast: that the fullness it expects at the next eventful moment sits in the middle of
+its comfort band. The remembered moment is read for the correction only, and it never picks a movement. It sets
+a target for one prediction at one earlier moment, and the same learning rules as everywhere else do the rest.
 ("Hindsight" names this one correction. It is not hindsight experience replay.)
 
 ## Contents
@@ -122,48 +124,50 @@ state with its mean over the active units removed.)*
 flowchart LR
     A["An eventful moment:<br/>a cue is seen, a movement is made"] -->|"the state and its inputs<br/>are remembered"| M[("Memory:<br/>one moment per body")]
     A --> W["Ticks without news:<br/>fullness leaks,<br/>the outcome may arrive"]
-    W -->|"outcome = change in fullness<br/>compared with the usual change"| N["The next eventful moment"]
-    M --> S["Surprise = outcome minus the anticipation<br/>read from the remembered state"]
+    W -->|"outcome = the change in fullness<br/>since the remembered moment"| N["The next eventful moment"]
+    M --> S["Surprise = outcome minus what<br/>the remembered moment forecast"]
     N --> S
     S -->|"delta rule"| R["The anticipation's weights"]
     S -->|"sent back one step,<br/>with the remembered inputs"| P["The input weights that formed<br/>the remembered state"]
 ```
 
-- *One more prediction.* One more set of weights reads the state and predicts the anticipation,
-  `a = Ca · z + ca0`. Its value is fed back into the state on the next tick, through input weights of its own.
-  *(Idea 9)*
+- *One more prediction.* One more set of weights reads the state and predicts the anticipation, `a = Ca · z`.
+  Its value is fed back into the state on the next tick, through input weights of its own. *(Idea 9)*
 - *Memory holds one moment.* A tick is eventful for a body when its sight or its movement was news: predicted
   neither by the forecast nor by the running average. Each body remembers its latest eventful moment: the state,
-  and the inputs that formed it. The agent is not told which ticks matter. In these two games the body does
-  exactly what it is told, so its movement is never news, and the eventful ticks are the cue ticks. *(Idea 10)*
-- *The outcome is measured against what is usual.* The agent keeps a running fit, across its bodies, of how
-  fullness usually changes from one tick to the next at a given fullness. The fit holds the leak, and also
-  whatever feeding has been usual lately. Between two eventful moments, each body adds up its changes in
-  fullness beyond that fit. The sum is the outcome `G`: positive when the remembered moment was followed by more
-  food than has been usual lately, negative when by less, and close to zero when it was followed by what is
-  usual (for example, once every body is fed on every trial). The fit moves a twentieth of the way per tick, so
-  a change that reaches every body at once still shows in `G` until the fit catches up.
-- *Hindsight sets a target.* When the next eventful moment arrives, the surprise is `G − a(remembered state)`,
-  with the anticipation read from the remembered state by the weights as they are now. The anticipation's
-  weights step toward it by the delta rule, at three times the forecast's rate and with a limit on the step.
-  The same error, sent back one step, corrects the input weights that formed the remembered state, using the
-  remembered inputs. No other weight is corrected.
-- *What is read when the agent acts.* The remembered moment is never read when the agent acts. Four running
-  averages kept beside it are read instead: how often eventful moments come, how fast fullness leaks between
-  them, how much outcomes vary, and how well the anticipation predicts them.
-- *The band reads one quantity.* The preference is applied to `fullness + forecast change + anticipation`. A
-  movement that would give up the usual meal therefore already looks hungry, before any fullness is lost. The
-  lower edge of the band is read where fullness is expected to bottom out before the next eventful moment, and
-  the uncertainty of that quantity includes how much outcomes vary. The push that turns the movement has two
-  terms, one through the weights that forecast the next change in fullness and one through the anticipation's
-  weights. The first is weighted by how well the one-tick forecast predicts, relative to the anticipation; the
-  second is multiplied by a fixed gain of 8. *(Idea 11)*
+  the inputs that formed it, and its fullness. The agent is not told which ticks matter. In these two games the
+  body does exactly what it is told, so its movement is never news, and the eventful ticks are the cue ticks.
+  *(Idea 10)*
+- *The outcome is the change in fullness.* Between two eventful moments, each body adds up its changes in
+  fullness. The sum is the outcome `G`: what leaked away over the interval, plus whatever was eaten.
+- *The forecast of an outcome has two parts.* One is a line read from the fullness at the remembered moment,
+  `slope × fullness + offset`, fitted across the bodies to the outcomes themselves. It carries what the fullness
+  alone tells, which is mostly the leak and the usual meal. The other is the anticipation, read from the
+  remembered state. It is left with what the line cannot tell: what this cue and this movement change.
+- *Hindsight sets a target.* When the next eventful moment arrives, the surprise is `G` minus the line minus
+  `a(remembered state)`, with the anticipation read from the remembered state by the weights as they are now.
+  The anticipation's weights step by that surprise with the delta rule, at three times the forecast's rate and
+  with a limit on the step. The same error, sent back one step, corrects the input weights that formed the
+  remembered state, using the remembered inputs. The line moves a twentieth of the way toward the fit of the
+  outcomes. No other weight is corrected.
+- *What is read when the agent acts.* The remembered moment is never read when the agent acts. Two running
+  averages kept beside it are read instead: how much outcomes vary, and how well the forecast predicts them.
+- *The anticipation has a setpoint of its own.* The comfort band is read on `fullness + forecast change`, one tick
+  ahead. The anticipation adds a second read, with a point as its goal: the fullness expected at the next
+  eventful moment, `fullness + line + a`, should sit in the middle of the band. Its error is counted in
+  half-widths of the band. A movement that would give up the next meal is therefore already wrong, before any
+  fullness is lost, and one that would overfill is wrong too. The push that turns the movement has two terms.
+  The first is the band's slope, through the weights that forecast the next change in fullness, weighted by how
+  well the one-tick forecast predicts relative to the outcome forecast. The second is the setpoint's error,
+  through the anticipation's weights, multiplied by a fixed gain of 8. *(Idea 11)*
 
-**Regulators.** Four regulators keep learning stable: an attention gain (1 to 10) on the surprise of inputs
+**Regulators.** Five regulators keep learning stable: an attention gain (1 to 10) on the surprise of inputs
 whose surprise would change the agent's other forecasts; one learning-rate gate (1 to 10) that opens when the
-anticipation's surprise is far from its usual size; a hold, set per body on each tick, that keeps up to 90% of
-the first level's previous activity through ticks with less surprise than usual; and first-level thresholds
-that weigh each tick by its surprise. *(Idea 12)*
+outcome forecast's surprise is far from its usual size; a hold, set per body on each tick, that keeps up to 90%
+of the first level's previous activity through ticks with less surprise than usual; first-level thresholds that
+weigh each tick by its surprise; and a limit on what one eventful moment can do to the three running averages
+of the outcome forecast's squared surprise (each takes a moment's sample at no more than 10 times its own value,
+so a single wild outcome cannot wipe out the forecast's measured skill). *(Idea 12)*
 
 Switching the hindsight correction off is one argument, `Agent(..., hindsight=False)`. Everything else stays the
 same. The gray curves in the figure are that agent.
@@ -179,16 +183,16 @@ python -m pcagent.run --game cue --delay 2 --seed 1
 
 ```text
 cue game, delay 2, seed 1: oracle 1.0000, floor 0.0016, bar 0.9002
-tick    1000  score 0.859  below  (41 ticks/s)
-tick    2000  score 0.995  at or above the bar  (43 ticks/s)
-tick    3000  score 0.996  at or above the bar  (43 ticks/s)
+tick    1000  score 0.887  below  (73 ticks/s)
+tick    2000  score 1.000  at or above the bar  (73 ticks/s)
+tick    3000  score 1.000  at or above the bar  (73 ticks/s)
 ...
-tick  102000  score 1.000  at or above the bar  (48 ticks/s)
+tick  102000  score 1.000  at or above the bar  (74 ticks/s)
 mastered at tick 2000; held >= 100000 ticks, R >= 50.0; held: yes
 ```
 
-The agent runs at about 50 ticks per second on one core, so a run that masters early and is then followed for
-100,000 ticks takes about half an hour. Stop it earlier with `--ticks 5000`. Add `--no-hindsight` for the control.
+The agent runs at 50 to 75 ticks per second on one core, depending on the machine, so a run that masters early
+and is then followed for 100,000 ticks takes about half an hour. Stop it earlier with `--ticks 5000`. Add `--no-hindsight` for the control.
 
 In code:
 
@@ -230,50 +234,49 @@ median of 2,000.
 <!-- results:begin -->
 | Game | Delay (ticks) | Pass bar | Mastered at tick, by seed | Hold ratio R, lowest seed | Windows below the bar after mastery | Lowest window after mastery |
 |---|---|---|---|---|---|---|
-| cue | 0 | 0.900 | 11,000, 1,000, 2,000 | ≥ 17.2 | 17 of 392 | 0.728 |
-| cue | 1 | 0.900 | 1,000, 1,000, 1,000 | ≥ 100.0 | 0 of 303 | 0.913 |
-| cue | 2 | 0.900 | 2,000, 2,000, 2,000 | ≥ 50.0 | 0 of 303 | 0.988 |
-| cue | 4 | 0.900 | 3,000, 3,000, 2,000 | ≥ 33.3 | 0 of 303 | 0.913 |
-| cue | 8 | 0.900 | 7,000, 5,000, 7,000 | ≥ 20.0 | 0 of 383 | 0.918 |
-| cue | 12 | 0.900 | 6,000, 7,000, 6,000 | ≥ 20.0 | 0 of 383 | 0.901 |
-| cue | 16 | 0.900 | 10,000, 13,000, 7,000 | ≥ 14.4 | 4 of 520 | 0.846 |
-| two-need | 1 | 0.944 | 1,000, 1,000, 1,000 | ≥ 100.0 | 0 of 303 | 0.980 |
-| two-need | 2 | 0.943 | 1,000, 1,000, 1,000 | ≥ 100.0 | 0 of 303 | 0.975 |
+| cue | 0 | 0.900 | 1,000, 6,000, 1,000 | ≥ 20.0 | 0 of 323 | 0.907 |
+| cue | 1 | 0.900 | 1,000, 1,000, 1,000 | ≥ 100.0 | 0 of 303 | 0.956 |
+| cue | 2 | 0.900 | 2,000, 2,000, 2,000 | ≥ 50.0 | 0 of 303 | 0.996 |
+| cue | 4 | 0.900 | 3,000, 2,000, 1,000 | ≥ 33.3 | 0 of 303 | 0.915 |
+| cue | 8 | 0.900 | 4,000, 4,000, 3,000 | ≥ 25.0 | 0 of 303 | 0.948 |
+| cue | 12 | 0.900 | 6,000, 6,000, 4,000 | ≥ 20.0 | 0 of 343 | 0.929 |
+| cue | 16 | 0.900 | 13,000, 6,000, 11,000 | ≥ 14.4 | 1 of 499 | 0.871 |
+| two-need | 1 | 0.944 | 1,000, 1,000, 1,000 | ≥ 100.0 | 0 of 303 | 0.955 |
+| two-need | 2 | 0.943 | 1,000, 1,000, 1,000 | ≥ 100.0 | 0 of 303 | 0.969 |
 <!-- results:end -->
 
 Reading the table:
 
 - **The delay costs time, not the result.** Mastery takes 1,000 to 3,000 ticks at delays of 1 to 4, and
-  5,000 to 13,000 ticks at delays of 8 to 16.
-- **After mastery the score is not perfectly steady.** At a delay of 0 and at a delay of 16, windows fell below
-  the bar one or two at a time (21 of 3,193 windows over all runs, the lowest 0.728), and the score came back.
-  No run had three such windows in a row.
-- **One run was slow.** At a delay of 0, seed 1 sat just under the bar and mastered at 11,000 ticks, where the
-  other two seeds took 1,000 and 2,000.
+  3,000 to 13,000 ticks at delays of 8 to 16.
+- **After mastery the score is steady.** At a delay of 16, a single window fell below the bar (1 of 2,983
+  windows over all runs, the lowest 0.871), and the score came back in the next window.
+- **The seeds differ most at the two ends.** At a delay of 0, seed 2 mastered at 6,000 ticks, where the other
+  two seeds took 1,000. At a delay of 16 the three seeds took 13,000, 6,000 and 11,000.
 
 **The control: with hindsight switched off, the same agent mastered nothing at the five combinations where it
-was run (one seed each).** Memory still records moments and outcomes, but corrects no weight, so the
-anticipation stays at zero.
+was run (one run each).** Memory still records moments and outcomes, but corrects no weight, so the
+anticipation and the line stay at zero.
 
 <!-- control:begin -->
 | Game | Delay (ticks) | Pass bar | Best window | Mean score | Ran for (ticks) | Outcome |
 |---|---|---|---|---|---|---|
-| cue | 0 | 0.900 | 0.002 | 0.000 | 200,000 | never mastered |
-| cue | 2 | 0.900 | 0.007 | 0.001 | 7,000 | never mastered; weights became non-finite |
-| cue | 8 | 0.900 | 0.188 | 0.004 | 200,000 | never mastered |
-| cue | 16 | 0.900 | 0.286 | 0.014 | 100,000 | never mastered |
-| two-need | 2 | 0.943 | 0.488 | 0.176 | 200,000 | never mastered |
+| cue | 0 | 0.900 | 0.084 | 0.002 | 200,000 | never mastered |
+| cue | 2 | 0.900 | 0.022 | 0.001 | 200,000 | never mastered |
+| cue | 8 | 0.900 | 0.070 | 0.002 | 200,000 | never mastered |
+| cue | 16 | 0.900 | 0.034 | 0.002 | 24,000 | never mastered; weights became non-finite |
+| two-need | 2 | 0.943 | 0.625 | 0.354 | 100,000 | never mastered |
 <!-- control:end -->
 
-Three of the five control runs went the full 200,000 ticks. The one at a delay of 2 stopped at tick 7,418,
-when its weights were no longer finite, and the one at a delay of 16 was stopped at 100,000 ticks after its
-score had fallen back to the floor.
+Three of the five control runs went the full 200,000 ticks. The one at a delay of 16 stopped at tick 24,976,
+when its weights were no longer finite, and the two-need run was stopped at 100,000 ticks after its score had
+fallen back to the floor.
 
 In the cue game the control stays near zero even with no delay at all. That suggests that in this agent the
 hindsight correction carries the link from movement to food at every delay, not only across a wait. The control
-removes both of its parts (the anticipation's weights and the correction of the input weights), so it does not
-say which one matters. In the two-need game the control scores 0.176 on average, below that game's floor of
-0.427.
+removes all three of its parts (the anticipation's weights, the line, and the correction of the input weights),
+so it does not say which one matters. In the two-need game the control scores 0.354 on average, below that
+game's floor of 0.427. Its best window, 0.625, is above the floor and far below the bar of 0.943.
 
 ## Where these numbers come from
 
@@ -343,30 +346,32 @@ Where it differs:
 Friston et al., 2017) treats goals as prior preferences over what the agent senses, and action as a way of
 making the senses match predictions.
 
-What the agent keeps: the preference is a range for an inner state (compare Pezzulo, Rigoli and Friston, 2015),
-and the movement is found during inference, by following the slope of that preference, with no separate actor.
+What the agent keeps: the preferences are over an inner state (compare Pezzulo, Rigoli and Friston, 2015): a
+range for the fullness one tick ahead, and a point, the middle of that range, for the fullness expected at the
+next eventful moment. The movement is found during inference, by following the slope of those preferences, with
+no separate actor.
 
 Where it differs:
 
-- The preference acts only on the movement. It does not bias the state the way a prior would.
+- The preferences act only on the movement. They do not bias the state the way a prior would.
 - Perception and action do not minimize one free-energy functional. What the movement follows corresponds at
   most to the preference term of expected free energy. No term seeks information for its own sake, and
   policies are not compared.
 - The movement is a command that the body executes and reports back, not a predicted sensation that reflexes
   fulfill.
 
-**[Reinforcement learning](https://en.wikipedia.org/wiki/Reinforcement_learning).** The anticipation predicts
-the change in an inner state up to the next eventful moment, measured against what is usual. It resembles a
-general value function (Sutton et al., 2011): the signal it sums is the change in fullness, the sum ends at the
-next eventful moment, and it is learned from the measured sum under the agent's own behavior rather than by
-bootstrapping from the next prediction. It differs from the usual construction in two ways: it is trained only
-at remembered moments, and its target is measured against a running baseline, the usual change at that
-fullness. It is not a value in the reward sense: it predicts a change in fullness, and the preference is applied
-afterwards, to fullness plus forecast change plus anticipation. Homeostatic reinforcement learning (Keramati and
-Gutkin, 2014) also derives what is good from an inner state, but in the other order: there the reward is the
-reduction of a drive, and its value is learned. Because the remembered state includes the movement, the
-anticipation depends on the movement, and the settle follows that dependence: toward a larger anticipation when
-the fullness it expects is below the band, toward a smaller one when it is above. There is no separate policy.
+**[Reinforcement learning](https://en.wikipedia.org/wiki/Reinforcement_learning).** The outcome forecast
+predicts the change in an inner state up to the next eventful moment. It resembles a general value function
+(Sutton et al., 2011): the signal it sums is the change in fullness, the sum ends at the next eventful moment,
+and it is learned from the measured sum under the agent's own behavior rather than by bootstrapping from the
+next prediction. It differs from the usual construction in two ways: it is trained only at remembered moments,
+and it is split into a line read from the fullness and the anticipation read from the state. It is not a value
+in the reward sense: it predicts a change in fullness, and the preference is applied afterwards, as a setpoint
+for the fullness it implies. Homeostatic reinforcement learning (Keramati and Gutkin, 2014) also derives what is
+good from an inner state, but in the other order: there the reward is the reduction of a drive, and its value is
+learned. Because the remembered state includes the movement, the anticipation depends on the movement, and the
+settle follows that dependence: toward a larger anticipation when the fullness expected at the next eventful
+moment is below the middle of the band, toward a smaller one when it is above. There is no separate policy.
 
 ## Limits
 
@@ -381,18 +386,19 @@ the fullness it expects is below the band, toward a smaller one when it is above
   that moment. Outcomes that overlap in time, or that depend on a moment before the latest one, are outside what
   this memory can represent.
 - **32 bodies that share weights.** Several running estimates are fitted across the bodies, among them the
-  usual change in fullness that every outcome is measured against. Other numbers of bodies, including one, were
-  not tested.
-- **Constants set by hand.** The agent has about 40 constants: 27 are set through arguments of `Agent` (rates,
-  the numbers of units, the gain of 8, the step limit), and the rest are fixed in the code (the threshold for
-  an eventful moment, the rates of the running averages). They are the same for all 27 runs and were never set
+  line that forecasts an outcome from the fullness. Other numbers of bodies, including one, were not tested.
+- **A point, not only a range.** The second read asks for the middle of the band, so the agent keeps steering
+  when its fullness is already inside the band. In the two-need game, on trials where a whole bite would
+  overfill a need, the research runs show it still taking 5% to 6% of a bite on average. The score counts only
+  whether fullness is inside the band, so it does not show this.
+- **Constants set by hand.** The agent has about 40 constants: 28 are set through arguments of `Agent` (rates,
+  the numbers of units, the gain of 8, the step limit, the limit of 10 on one outcome's sample), and the rest
+  are fixed in the code (the threshold for an eventful moment, the rates of the running averages). They are the same for all 27 runs and were never set
   per game or per delay, but they were chosen while working on these two games. There is no held-out task.
 - **One configuration is reported.** Apart from the hindsight switch, which was run at five of the nine
-  combinations with one seed each, this repository contains no comparison of the parts, and no comparison with
+  combinations with one run each, this repository contains no comparison of the parts, and no comparison with
   a reinforcement-learning baseline.
 - **Three seeds.** Each combination was run with three sets of random weights.
-- **The score dips.** As described above, windows fall below the bar after mastery at the shortest and the
-  longest delay.
 - **It is a model of an idea, not of a brain.** The parts are named after what they do. No claim is made that
   they correspond to particular neural structures.
 
@@ -401,7 +407,7 @@ the fullness it expects is below the band, toward a smaller one when it is above
 | File | What is in it |
 |---|---|
 | [`pcagent/agent.py`](pcagent/agent.py) | The agent: state, settling, every learning rule, anticipation and memory |
-| [`pcagent/memory.py`](pcagent/memory.py) | When a tick is eventful, and how an outcome is measured against the usual change |
+| [`pcagent/memory.py`](pcagent/memory.py) | When a tick is eventful, and the line that forecasts an outcome from the fullness |
 | [`pcagent/worlds.py`](pcagent/worlds.py) | The two games, and the reference policies that set the floor and the oracle |
 | [`pcagent/scoring.py`](pcagent/scoring.py) | The pass bar, mastery and the hold ratio |
 | [`pcagent/run.py`](pcagent/run.py) | Runs one agent on one game: `python -m pcagent.run` |

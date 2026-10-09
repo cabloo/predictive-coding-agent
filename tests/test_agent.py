@@ -6,7 +6,7 @@ import torch
 from pcagent import Agent, CueGame, TwoNeedGame
 from pcagent.run import run
 
-WEIGHTS = ("C", "c0", "K", "Km", "A", "Ka", "W2", "K2", "A2", "Wv", "bv", "Ca", "ca0")
+WEIGHTS = ("C", "c0", "K", "Km", "A", "Ka", "W2", "K2", "A2", "Wv", "bv", "Ca", "from_level")
 
 
 def play(agent, game, ticks):
@@ -73,7 +73,7 @@ def test_the_movement_is_never_forecast():
 def test_with_hindsight_off_the_anticipation_stays_at_zero():
     agent, game = make(hindsight=False)
     play(agent, game, 150)
-    assert float(agent.Ca.abs().max()) == 0.0 and float(agent.ca0.abs().max()) == 0.0
+    assert float(agent.Ca.abs().max()) == 0.0 and float(agent.from_level.abs().max()) == 0.0
     assert float(agent.ant.abs().max()) == 0.0
     assert agent.outcome_stats is not None            # memory still records outcomes
 
@@ -83,10 +83,10 @@ def test_a_checkpoint_restores_the_weights():
     play(agent, game, 60)
     other, _ = make(seed=9)
     other.load_state_dict(agent.state_dict())
-    for k in WEIGHTS + ("usual", "leak", "skill"):
+    for k in WEIGHTS + ("skill",):
         assert torch.equal(getattr(agent, k), getattr(other, k)), k
     assert all(torch.equal(a, b) for a, b in zip(agent.theta, other.theta))
-    assert other.write_rate == agent.write_rate and other.gate_fast == agent.gate_fast
+    assert other.gate_fast == agent.gate_fast and other.gate_slow == agent.gate_slow
 
 
 def test_a_checkpoint_of_another_size_is_refused():
