@@ -1,10 +1,11 @@
 """A predictive-coding agent that learns to act for a delayed outcome by hindsight anticipation.
 
 The agent keeps a sparse internal state, predicts its next senses from it, and learns from its own prediction errors.
-Its only preference is a range (a comfort band) for its fullness. The movement it makes is inferred while the state
-settles, by following the slope of that preference. One extra predicted quantity, an anticipation of how much its
-fullness will change by the next eventful moment, lets the preference reach across a delay; a memory of the last
-eventful moment corrects that anticipation in hindsight.
+Its preferences concern only its fullness: a range (a comfort band) one tick ahead, and the middle of that range at
+the next eventful moment. The movement it makes is inferred while the state settles, by following the slope of those
+preferences. One extra forecast, of how much its fullness will change by the next eventful moment, lets them reach
+across a delay; the part of it read from the state is the anticipation, and a memory of the last eventful moment
+corrects it in hindsight.
 
 The comments name the parts as the README does, "Idea 1" to "Idea 12":
 
@@ -105,7 +106,7 @@ class Agent:
             (Idea 12).
         init_scale: scale of the forecast weights at birth.
         hindsight: False switches memory's corrections off, as a control. Memory still records moments, outcomes
-            and its statistics, but corrects no weight, so the anticipation and its forecast stay at zero.
+            and its statistics, but corrects no weight, so the anticipation and the line stay at zero.
         device: where the tensors live. The results were run on the CPU.
 
     Attributes worth reading from outside:

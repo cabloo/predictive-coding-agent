@@ -15,7 +15,7 @@ fullness: keep it inside a range, and steer toward the middle of that range furt
 weights, it learns to answer the cue and keeps doing so.
 All 27 runs (9 combinations of game and delay, 3 random seeds each) reached the pass bar in 1,000 to 13,000
 ticks. The bar is 90% of the way from the best policy that ignores what the game is about to a hand-written
-perfect one. No run lost it afterwards (three 1,000-tick windows in a row below the bar) for as long as it ran,
+perfect one. No run lost it afterward (three 1,000-tick windows in a row below the bar) for as long as it ran,
 100,000 ticks or more. In all runs together, one window dipped below the bar after mastery.
 
 **How it is built.** About 700 lines of plain tensor code in [`pcagent/agent.py`](pcagent/agent.py), run on one
@@ -27,9 +27,9 @@ from a prediction error times that weight's input: the forecast weights by a
 step through the forecast weights.
 
 **The idea, in one paragraph.** The agent's forecast looks one tick ahead, and one-tick errors do not connect a
-movement to food that arrives eight ticks later. So the agent predicts one more quantity, an *anticipation*:
-how much its fullness will change by the next eventful moment (a tick whose sight it did not predict). A small
-memory holds the last eventful moment. When the next one arrives, the agent knows how much its fullness actually
+movement to food that arrives eight ticks later. So the agent forecasts one more quantity: how much its
+fullness will change by the next eventful moment (a tick whose sight it did not predict). The part of that
+forecast read from its state is the *anticipation*. A small memory holds the last eventful moment. When the next one arrives, the agent knows how much its fullness actually
 changed in between, and in hindsight it corrects what the remembered moment should have forecast. The agent then
 asks one thing of that forecast: that the fullness it expects at the next eventful moment sits in the middle of
 its comfort band. The remembered moment is read for the correction only, and it never picks a movement. It sets
@@ -96,7 +96,8 @@ forecast. *(Ideas 1 and 2)*
 
 **The state is found by settling.** On each tick the units are driven by the surprise, by the previous state
 and by the movement. The surprise is this tick's senses minus what the previous state forecast for them (the
-forecast's constant term is left out here and used only when the weights learn). Units whose input weights
+forecast's constant term is left out here; it is used when the weights learn and, for the change in fullness,
+where the comfort band is read). Units whose input weights
 overlap inhibit each other. Forty small steps of this relaxation give the state. The relaxation runs twice per
 tick: once with the goal and the second level's prediction, which gives the movement and the state the forecast
 reads, and once with neither and with that movement fixed, which gives the state that the second level
@@ -255,7 +256,7 @@ Reading the table:
   two seeds took 1,000. At a delay of 16 the three seeds took 13,000, 6,000 and 11,000.
 
 **The control: with hindsight switched off, the same agent mastered nothing at the five combinations where it
-was run (one run each).** Memory still records moments and outcomes, but corrects no weight, so the
+was run (one run each, with seeds 1, 1, 2, 3 and 1 in the table's order).** Memory still records moments and outcomes, but corrects no weight, so the
 anticipation and the line stay at zero.
 
 <!-- control:begin -->
@@ -269,8 +270,8 @@ anticipation and the line stay at zero.
 <!-- control:end -->
 
 Three of the five control runs went the full 200,000 ticks. The one at a delay of 16 stopped at tick 24,976,
-when its weights were no longer finite, and the two-need run was stopped at 100,000 ticks after its score had
-fallen back to the floor.
+when its weights were no longer finite, and the two-need run was stopped at 100,000 ticks, after its score had
+fallen from a peak of 0.625 to about 0.2, below that game's floor.
 
 In the cue game the control stays near zero even with no delay at all. That suggests that in this agent the
 hindsight correction carries the link from movement to food at every delay, not only across a wait. The control
@@ -316,9 +317,10 @@ that the code does not do.
 **[Predictive coding](https://en.wikipedia.org/wiki/Predictive_coding)** (Rao and Ballard, 1999) describes a
 hierarchy in which each level predicts the level below and receives the error of that prediction.
 
-What the agent keeps: the senses drive the state only as prediction errors (the preference alone reads the
-current fullness directly, and it acts on the movement), every weight learns from a prediction error, and a
-higher level predicts a lower one and sends its prediction down.
+What the agent keeps: the senses drive the state only as prediction errors, every weight learns from a
+prediction error, and a higher level predicts a lower one and sends its prediction down. (The current fullness is
+read directly in three places, none of which drives the state with it: by the preference, which acts on the
+movement; by memory, which measures outcomes; and to bound the anticipation that is fed back.)
 
 Where it differs:
 
@@ -339,7 +341,8 @@ Where it differs:
   drives the state, and it comes from how much that input's surprise would change the agent's other forecasts,
   not from the error's variance. The learned variance is used only where the comfort band is read.
 - One global number, the learning-rate gate, multiplies the learning rate of the first level's forecast weights,
-  most of its input weights and memory's corrections. It changes the size of a step and never its direction.
+  most of its input weights, and memory's corrections of the anticipation's weights and of the input weights (the
+  fit of the line is not gated). It changes the size of a step and never its direction.
   It is a global signal, not a local one, and can be read as a global third factor on the learning rate.
 
 **[Active inference](https://en.wikipedia.org/wiki/Free_energy_principle#Active_inference)** (Friston, 2010;
@@ -366,7 +369,7 @@ predicts the change in an inner state up to the next eventful moment. It resembl
 and it is learned from the measured sum under the agent's own behavior rather than by bootstrapping from the
 next prediction. It differs from the usual construction in two ways: it is trained only at remembered moments,
 and it is split into a line read from the fullness and the anticipation read from the state. It is not a value
-in the reward sense: it predicts a change in fullness, and the preference is applied afterwards, as a setpoint
+in the reward sense: it predicts a change in fullness, and the preference is applied afterward, as a setpoint
 for the fullness it implies. Homeostatic reinforcement learning (Keramati and Gutkin, 2014) also derives what is
 good from an inner state, but in the other order: there the reward is the reduction of a drive, and its value is
 learned. Because the remembered state includes the movement, the anticipation depends on the movement, and the
@@ -406,7 +409,7 @@ moment is below the middle of the band, toward a smaller one when it is above. T
 
 | File | What is in it |
 |---|---|
-| [`pcagent/agent.py`](pcagent/agent.py) | The agent: state, settling, every learning rule, anticipation and memory |
+| [`pcagent/agent.py`](pcagent/agent.py) | The agent: state, settling, every learning rule except the fit of the line, anticipation and memory |
 | [`pcagent/memory.py`](pcagent/memory.py) | When a tick is eventful, and the line that forecasts an outcome from the fullness |
 | [`pcagent/worlds.py`](pcagent/worlds.py) | The two games, and the reference policies that set the floor and the oracle |
 | [`pcagent/scoring.py`](pcagent/scoring.py) | The pass bar, mastery and the hold ratio |
