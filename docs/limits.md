@@ -18,10 +18,10 @@ what it does show, see [results.md](results.md); for the short account, the [REA
   so the agent's eventful moments are exactly the cue ticks, and every interval between two of them holds one
   decision and one outcome. Finding events by prediction error was therefore not put to a test: a detector that
   fired whenever sight was not blank would divide these games the same way.
-- **The control is not in yet, and it removes several things at once.** The runs with the hindsight
-  correction switched off had not finished when this page was written. Switching it off also leaves the second
-  preference with nothing to act through. So the control can show that the agent needs the event path as it is
-  built. It cannot show that reaching across the delay is what that path contributes
+- **The control removes several things at once.** Switching the hindsight correction off also leaves the second
+  preference with nothing to act through, and the control fails even with no delay, where the one-tick forecast
+  and the outcome forecast have the same target. It shows that the agent needs the event path as it is built.
+  It does not show that reaching across the delay is what that path contributes
   ([the control](results.md#the-control)).
 - **The information term is not shown to help.** In these two games it is a cost: the same agent without it
   masters every game with less than a third of the time outside the band on the way, and more steadily
@@ -31,10 +31,10 @@ what it does show, see [results.md](results.md); for the short account, the [REA
 - **One late loss of mastery, not explained.** One run of the 27 fell below the bar for four windows in a row
   after 138,000 ticks of holding, and came back by itself ([results](results.md#all-27-runs)). Why was not
   tracked down.
-- **Most parts were not tested one by one.** One switch was run, the information term, at every combination
-  with three seeds; the hindsight correction's control is not in yet. The second level, the one-tick
-  preference, the attention gain, the hold, the learning-rate gate (two-sided, and its falling side alone for
-  the input weights), and the movement's one-step wait have no test of their own.
+- **Most parts were not tested one by one.** Two switches were run: the information term, at every combination
+  with three seeds, and the hindsight correction, at five of the nine combinations with one run each. The second
+  level, the one-tick preference, the attention gain, the hold, the learning-rate gate (two-sided, and its
+  falling side alone for the input weights), and the movement's one-step wait have no test of their own.
 - **Holding back is barely tested.** In the cue game a body that always answers correctly sits between 0.60 and
   0.75, and 0.75 is the setpoint, so the fullness never rises past the setpoint and more food is always right.
   There, steering toward the setpoint and simply eating as much as possible are the same behavior. Only the

@@ -19,15 +19,17 @@ comfortable range, and it learns the rest by predicting what it will sense next 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/summary-dark.svg">
-  <img src="docs/summary-light.svg" alt="Learning curves. The score climbs past the pass bar and stays there at every delay shown, sooner at the shorter delays, apart from one brief dip at the longest delay.">
+  <img src="docs/summary-light.svg" alt="Learning curves. With the full agent the score climbs past the pass bar and stays there at every delay shown, apart from one brief dip at the longest delay. With the look-back switched off it stays near zero.">
 </picture>
 
-*What to see: the agent climbs past the pass bar (a score close to a perfect player's, defined under
-[Results](#results)) and stays there, at each of four delays between its move and its food. The score is the
-share of the time the agent keeps itself well fed, counted over 32 copies of it that learn together and share
-one brain. Each line is the average of three runs that start from random weights. A point covers 1,000 time
-steps, so learning that happens inside the first 1,000 does not show. The notch near the right edge of the
-longest delay is one run that lost the task for 4,000 time steps and found it again.*
+*What to see: the full agent (blue) climbs past the pass bar (a score close to a perfect player's, defined
+under [Results](#results)) and stays there, at each of four delays between its move and its food. With one part
+switched off (gray, the same four delays), it stays at the bottom. The score is the share of the time the agent
+keeps itself well fed, counted over 32 copies of it that learn together and share one brain. Each blue line is
+the average of three runs that start from random weights, and each gray line is one run. A point covers 1,000
+time steps, so learning that happens inside the first 1,000 does not show. The notch near the right edge of the
+longest delay is one run that lost the task for 4,000 time steps and found it again. The part switched off is
+the look-back explained below.*
 
 ## In plain words
 
@@ -85,9 +87,10 @@ outside its comfortable range, and its score dipped less often afterward. The ta
 something new: any move that is partly right is partly fed. The pull is part of the agent because the theory it
 is built on says an agent should have one. A task that needs it was not run.
 
-**A check that is still running.** The usual test of a part like the look-back is to switch it off and see
-whether the task is still learned. That test, the *control*, had not finished when this page was written. Its
-runs are added to the results when they end.
+**Without the look-back.** The usual test of a part like the look-back is to switch it off and see whether
+the task is still learned. In that test, the *control*, the agent never learned the task in any of five runs.
+That shows it depends on the look-back. It does not show that the delay is the reason: the switched-off agent
+also failed with no delay at all, and why was not tracked down.
 
 **What this is, and is not.** It is a small proof of concept, not a benchmark result. A standard method, given
 a reward, would be expected to solve a task of this size, and none was run here. What it shows is narrower: an
@@ -138,10 +141,10 @@ How a run is judged:
   of runs. The times to mastery (75,000 ticks summed, against 140,000) understate this, because they are
   counted in windows of 1,000 ticks and 13 of the 27 runs without the term mastered inside the first one.
   After mastery 3 of its windows were below the bar, against 19.
-- **The control is not in yet.** The same agent with the hindsight correction switched off is being run at
-  five combinations. Those runs had not finished when this page was written.
+- **The control never mastered a game.** The same agent with the hindsight correction switched off was run
+  five times, for 200,000 ticks each. None reached the bar, including one with no delay at all.
 
-The full tables, the comparison with and without the information term, the control and what it can show, and
+The full tables, the comparison with and without the information term, the control and what it does not show, and
 every curve are in [docs/results.md](docs/results.md). The agent published here was also checked, tick for
 tick, against the research program that produced the curves:
 [how the numbers were checked](docs/results.md#how-the-numbers-were-checked).
@@ -222,10 +225,11 @@ What may be worth a closer look:
   it is made.
   [In words](docs/how-it-works.md#the-anticipation-has-a-setpoint-of-its-own) ·
   [relation to interoceptive inference](docs/theory.md#active-inference)
-- **The ablation of the look-back is pending.** The same agent with the hindsight correction off is being run
-  at five combinations, one of them with no delay. When it is in, it will remove the event path as a whole: its
-  fixed gain, its point setpoint, its faster rate, its fitted line, its step into the input weights, and with
-  them the information term. It cannot say which of those the agent needs.
+- **One ablation, and what it does not show.** With the hindsight correction off, no run reaches the bar. That
+  includes the run with no delay, where nearly every tick is an event and the two forecasts have the same
+  target. So the ablation shows that the agent needs the event path as it is built: its fixed gain, its point
+  setpoint, its faster rate, its fitted line, its step into the input weights, and with them the information
+  term. It does not show that reaching across the delay is what that path contributes.
   [The control](docs/results.md#the-control)
 - **What is built in by hand.** The cost and its setpoint, a privileged interoceptive channel, three hand-shaped
   gains where a precision would stand (the attention gain, the weight between the two preferences and the
@@ -283,8 +287,8 @@ above the bar, and that 6,000 ticks are too few to say whether it held. Without 
 100,000 ticks after mastery, which is how the results were produced. `R` is the time mastery lasted divided by
 the time it took to reach, and a game counts as held when `R` is at least 10.
 
-The agent runs at 30 to 45 ticks per second on one CPU core, depending on the machine, so this short run takes
-two to four minutes and a complete one 40 minutes to an hour. Add `--no-information` for the agent without the
+The agent runs at 30 to 58 ticks per second on one CPU core, depending on the machine, so this short run takes
+two to four minutes and a complete one 30 minutes to an hour. Add `--no-information` for the agent without the
 information term, and `--no-hindsight` for the control.
 
 In code, the agent needs nothing from a game except its three senses:
@@ -309,8 +313,8 @@ two to three minutes).
   shows that the method scales.
 - **No baseline.** A standard reinforcement-learning agent, given a reward, would be expected to solve both
   games. None was run.
-- **The control is not in yet.** The runs with the hindsight correction switched off had not finished when
-  this page was written.
+- **The control does not isolate the delay.** It fails with no delay too, so it shows that the agent needs the
+  hindsight path, not why.
 - **The information term is not shown to help.** In these games it costs time and steadiness, and no task here
   needs it.
 - **The games hand the agent its events.** The eventful moments are exactly the signal ticks, and one outcome
@@ -334,7 +338,7 @@ The full list, and the experiments that would test the idea further: [docs/limit
 | [`pcagent/memory.py`](pcagent/memory.py) | When a tick is eventful, and the line that forecasts an outcome from the fullness |
 | [`pcagent/worlds.py`](pcagent/worlds.py) | The two games, and the reference policies that set the floor and the oracle |
 | [`pcagent/scoring.py`](pcagent/scoring.py), [`run.py`](pcagent/run.py), [`report.py`](pcagent/report.py) | The pass bar and mastery, the runner, and the tables |
-| [`results/acceptance.json`](results/acceptance.json) | The 27 learning curves, and the 27 without the information term |
+| [`results/acceptance.json`](results/acceptance.json) | The 27 learning curves, the 27 without the information term, and the 5 control curves |
 | [`docs/how-it-works.md`](docs/how-it-works.md) | Every part of the agent, in words |
 | [`docs/equations.md`](docs/equations.md) | Every update rule, with the function that implements it |
 | [`docs/results.md`](docs/results.md) | Full results, what the information term costs, the control, and how the numbers were checked |

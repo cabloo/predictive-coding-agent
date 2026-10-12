@@ -118,6 +118,50 @@ def test_the_control_is_reported_only_once_its_runs_are_in():
         assert pending in TEXT and pending in README_TEXT
 
 
+def test_no_control_run_mastered():
+    assert [(c["game"], c["delay"], c["seed"]) for c in CONTROL] == [
+        ("cue", 0, 1), ("cue", 2, 1), ("cue", 8, 2), ("cue", 16, 3), ("two-need", 2, 1)]
+    assert "with seeds 1, 1, 2, 3 and 1 in the table's order" in TEXT
+    for c in CONTROL:
+        assert scoring.ticks_to_mastery(curve(c), c["bar"]) is None
+        assert max(s for _, s in c["curve"]) < c["bar"] - 0.3
+        assert c["curve"][-1][0] == 200000 and not c["diverged"]
+    assert ("All five control runs went the full 200,000 ticks, and none ended with weights that were no longer "
+            "finite") in TEXT
+    assert "mastered nothing at the five combinations where it was run" in TEXT
+    assert ("was run five times, for 200,000 ticks each. None reached the bar, including one with no delay at all"
+            in README_TEXT)
+    assert "the agent never learned the task in any of five runs" in README_TEXT
+    assert ("With the hindsight correction off, no run reaches the bar. That includes the run with no delay"
+            in README_TEXT)
+    assert "It fails with no delay too" in README_TEXT
+    assert "the 5 control curves" in README_TEXT
+
+
+def test_what_the_control_runs_did():
+    best = {(c["game"], c["delay"]): max(s for _, s in c["curve"]) for c in CONTROL}
+    scores = {(c["game"], c["delay"]): [s for _, s in c["curve"]] for c in CONTROL}
+    assert best[("cue", 0)] < 0.1 and "the control stays near zero at a delay of 0" in TEXT
+    for d in (8, 16):                                             # the best window is the first one
+        assert scores[("cue", d)][0] == best[("cue", d)] and max(scores[("cue", d)][1:]) < 0.02
+    assert ("At delays of 8 and 16 its best window is the first one (%.3f in both)" % best[("cue", 8)]) in TEXT
+    assert "%.3f" % best[("cue", 8)] == "%.3f" % best[("cue", 16)]
+    for d in (0, 2):                                              # a small rise over the last 40,000 ticks
+        sc = scores[("cue", d)]
+        assert sum(sc[-40:]) / 40 > 3 * sum(sc[40:160]) / 120 and sum(sc[-20:]) > sum(sc[-40:-20])
+        assert sc.index(max(sc)) >= 160
+    assert ("At delays of 0 and 2 the score rises a little over the last 40,000 ticks, to a best window of %.3f and "
+            "%.3f" % (best[("cue", 0)], best[("cue", 2)])) in TEXT
+    on = {(c["delay"], c["seed"]): mastered_at(c) for c in RUNS if c["game"] == "cue"}
+    assert (on[(0, 1)], on[(2, 1)]) == (2000, 3000)
+    assert "With hindsight on, the same seed mastered those two combinations at ticks 2,000 and 3,000" in TEXT
+    (two,) = [c for c in CONTROL if c["game"] == "two-need"]
+    sc = scores[("two-need", 2)]
+    assert max(sc) < two["floor"]
+    assert ("The control scores %.3f on average and %.3f in its best window. No window reaches that game's floor of "
+            "%.3f" % (sum(sc) / len(sc), max(sc), two["floor"])) in TEXT
+
+
 def test_the_headline_numbers():
     s = report.summary(CELLS)
     assert (s["runs"], s["mastered"], s["held"], s["sustained_losses"]) == (27, 27, 27, 1)

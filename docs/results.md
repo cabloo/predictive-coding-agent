@@ -129,27 +129,47 @@ than a third of the time outside the band on the way, fewer dips afterward and n
 
 ## The control
 
-The control is the same agent with the hindsight correction switched off (`hindsight=False`). Memory still
-records moments and outcomes, but corrects no weight, so the anticipation and the line stay at zero.
+**With hindsight switched off (`hindsight=False`), the same agent mastered nothing at the five combinations
+where it was run (one run each, with seeds 1, 1, 2, 3 and 1 in the table's order).** Memory still records
+moments and outcomes, but corrects no weight, so the anticipation and the line stay at zero.
 
-**Its runs had not finished when this page was written.** There are five, one run each: the
-cue game at delays of 0, 2, 8 and 16, and the two-need game at a delay of 2. They are added to the results file
-and to this section when they end.
+<!-- control:begin -->
+| Game | Delay (ticks) | Pass bar | Best window | Mean score | Ran for (ticks) | Outcome |
+|---|---|---|---|---|---|---|
+| cue | 0 | 0.900 | 0.046 | 0.009 | 200,000 | never mastered |
+| cue | 2 | 0.900 | 0.115 | 0.017 | 200,000 | never mastered |
+| cue | 8 | 0.900 | 0.041 | 0.001 | 200,000 | never mastered |
+| cue | 16 | 0.900 | 0.041 | 0.000 | 200,000 | never mastered |
+| two-need | 2 | 0.943 | 0.345 | 0.224 | 200,000 | never mastered |
+<!-- control:end -->
 
-What the control can and cannot show:
+All five control runs went the full 200,000 ticks, and none ended with weights that were no longer finite.
+
+What the control does and does not show:
 
 - **It removes the event path as a whole.** With the anticipation's weights at zero, the second preference has
   nothing to act through, so the control acts on the one-tick read of the comfort band alone. Several things
   go with it: the fixed gain of 8, the point setpoint (the band's cost is flat inside the band, and the
   setpoint's error is not), the tripled rate, the line, the hindsight step into the input weights, and the
-  information term, which has no evidence to read. The control cannot say which of these matters.
+  information term, which has no evidence to read. The control does not say which of these matters.
 - **The gate is not removed.** The learning-rate gate keeps running in the control. With the anticipation's
   weights and the line at zero it is driven by the size of the outcomes themselves, and it still scales the
   ordinary learning rates between 1 and 10.
-- **At a delay of 0, memory is not needed.** There a cue arrives on every tick, nearly every tick is an
-  eventful moment, and the outcome is the next tick's change in fullness: the one-tick forecast and the outcome
-  forecast have the same target. If the control fails there too, it shows that this agent needs the event path
-  as it is built, and not that reaching across the delay is what that path contributes.
+- **It fails even with no delay, where memory is not needed.** In the cue game the control stays near zero at a
+  delay of 0. There a cue arrives on every tick, nearly every tick is an eventful moment, and the outcome is the
+  next tick's change in fullness: the one-tick forecast and the outcome forecast have the same target. So the
+  control shows that this agent needs the event path as it is built. It does not show that reaching across the
+  delay is what that path contributes. Telling the two apart needs controls that were not run: the differences
+  listed above switched one at a time at a delay of 0, with the gate held at 1.
+- **One run each.** Each control combination was run once.
+- **In the cue game it stays near zero.** At delays of 8 and 16 its best window is the first one (0.041 in
+  both), where every body starts inside the band. At delays of 0 and 2 the score rises a little over the last
+  40,000 ticks, to a best window of 0.046 and 0.115, and it was still rising slowly when the runs reached
+  their cap of 200,000 ticks. With hindsight on, the same seed mastered those two combinations at ticks 2,000
+  and 3,000.
+- **In the two-need game it stays below the floor.** The control scores 0.224 on average and 0.345 in its best
+  window. No window reaches that game's floor of 0.427, the best score of the reference policies that ignore the
+  body's fullness.
 
 ## Every curve
 
@@ -157,7 +177,8 @@ What the control can and cannot show:
 
 *Each panel is one game at one delay. Each point is the mean score over 1,000 ticks, so where a curve starts
 above the bar, the learning happened inside the first window. Blue: three runs from different random weights.
-Dotted: the pass bar. The runs without the information term are not drawn.*
+Gray (five panels): the control, one run each. Dotted: the pass bar. The runs without the information term
+are not drawn.*
 
 ## Reproducing a row
 
@@ -187,8 +208,8 @@ reduced to the one configuration reported here, and the reduction was checked:
 - **The whole pipeline gives the same curve.** The research harness and `pcagent.run` (this repository's games,
   reference policies, scoring and stopping rule) were run on the same machine. The floor, the oracle, the pass
   bar and every point of the curve were equal: over 20,000 ticks at three combinations with the information
-  term, at one without it and at one with hindsight off, and over three shorter runs. A complete run to the
-  stopping rule had not finished when this page was written.
+  term, at one without it and at one with hindsight off, over three shorter runs, and over one complete run
+  (cue game, delay 2, seed 1), which both programs ended at tick 103,000 with the same result.
 - **The games are the same.** For the same movements, both games return the same senses, credits and scores as
   the research versions at five delays each, and the reference scores are equal.
 

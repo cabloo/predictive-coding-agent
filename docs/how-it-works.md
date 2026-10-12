@@ -276,7 +276,7 @@ Switching the hindsight correction off is one argument, `Agent(..., hindsight=Fa
 same: memory still records moments and outcomes, but corrects no weight, so the anticipation's weights and the
 line stay at zero and the second preference has nothing to act through. The information term then casts no vote
 either, because no evidence is ever added. The learning-rate gate keeps running, on the size of the outcomes
-themselves. [The control](results.md#the-control) says what that agent can and cannot show.
+themselves. [The control](results.md#the-control) says what that agent does and does not show.
 
 Switching the information term off is `Agent(..., information=False)`. The movement then follows the lean alone,
 and no evidence is kept. Nothing else changes.
