@@ -2,12 +2,15 @@
 
 The agent keeps a sparse internal state, predicts its next senses from it, and learns from its own prediction errors.
 Its preferences concern only its fullness: a range (a comfort band) one tick ahead, and the middle of that range at
-the next eventful moment. The movement it makes is found while the state settles, by following the slope of those
-preferences. One extra forecast, of how much its fullness will change by the next eventful moment, lets them reach
-across a delay; the part of it read from the state is the anticipation, and a memory of the last eventful moment
-corrects it in hindsight.
+the next eventful moment. The movement is inferred while the state settles. It descends one function of free-energy
+form in which those preferences are priors, taken in the limit where they move the body and reach the state only
+through that movement. One extra forecast, of how much its fullness will change by the next eventful moment, lets the
+preferences reach across a delay; the part of it read from the state is the anticipation, and a memory of the last
+eventful moment corrects it in hindsight. The movement also follows the slope of that anticipated outcome's expected
+free energy in the forecast's uncertainty, which adds a pull toward states the anticipation has rarely been corrected
+on, or away from them while the forecast's spread is wider than the preference's.
 
-The comments name the parts as docs/how-it-works.md does, "Idea 1" to "Idea 12":
+The comments name the parts as docs/how-it-works.md does, "Idea 1" to "Idea 13":
 
     Idea 1   predict the next senses; the forecast learns by a normalized delta rule
     Idea 2   a sparse state of thresholded units with lateral inhibition
@@ -15,19 +18,23 @@ The comments name the parts as docs/how-it-works.md does, "Idea 1" to "Idea 12":
     Idea 4   the input weights learn from the forecast's error, sent back one step
     Idea 5   a second level predicts the first
     Idea 6   the comfort band, read under the forecast's uncertainty
-    Idea 7   the movement is found during the settle, by following the slope of the preferences
+    Idea 7   the movement is inferred during the settle: it descends a function of free-energy form in which the
+             preferences are priors
     Idea 8   the weights that forecast the change in fullness read a centered state
     Idea 9   one anticipation, read from the state and fed back into it on the next tick
     Idea 10  memory sets the anticipation's target at one remembered moment: the change in fullness that followed
     Idea 11  the anticipation has a setpoint of its own: fullness at the next moment should sit at the band's middle
-    Idea 12  regulators: attention, a learning-rate gate, a hold on ticks with little surprise, thresholds that
-             weigh each tick by its surprise, and running averages that no single outcome can rewrite
+    Idea 12  regulators: attention, a learning-rate gate (the input weights take one side of it), a hold on ticks
+             with little surprise, thresholds that weigh each tick by its surprise, and running averages that no
+             single outcome can rewrite
+    Idea 13  the anticipation's weights are uncertain where they have rarely been corrected; the movement also
+             follows the slope, in that uncertainty, of the anticipated outcome's expected free energy
 
 Shapes: ``B`` bodies run in parallel and share every weight. What the agent senses on a tick is one vector,
 ``[sight | last movement | fullness | change in fullness]``. In the code ``level`` is the fullness. ``z1`` and ``z2``
 are the states of the two levels of units and ``u1`` and ``u2`` their potentials before thresholding. Level 1 has two
-states per tick: ``z1`` from the settle that includes the goal, and ``z1_up``, the goal-free state, from the settle
-that does not.
+states per tick: ``z1`` from the settle in which the movement is inferred, and ``z1_up``, the goal-free state, from a
+second settle with that movement fixed. The preferences enter neither state's input.
 
 In the comments, "surprise" means a signed prediction error (what was sensed minus what was forecast), not the
 negative log probability of an observation. docs/equations.md gives every update below as an equation.
@@ -108,13 +115,17 @@ class Agent:
         hold_max, hold_steepness: the largest hold on a tick with little surprise, and how steeply it sets in
             (Idea 12).
         init_scale: scale of the forecast weights at birth.
+        move_delay: settle steps before the movement may start to turn (Idea 7).
         hindsight: False switches memory's corrections off, as a control. Memory still records moments, outcomes
-            and its statistics, but corrects no weight, so the anticipation and the line stay at zero.
+            and its statistics, but corrects no weight, so the anticipation and the line stay at zero (and the
+            information term, which reads what memory has corrected, casts no vote).
+        information: False switches the information term off (Idea 13): the movement then follows the two
+            preferences alone, and no evidence is kept.
         device: where the tensors live. The results were run on the CPU.
 
     Attributes worth reading from outside:
         info: a few numbers from the last tick (the gate, the size of the anticipation's weights, the number of
-            active units, and the last hindsight surprise).
+            active units, the size of the information term's vote, and the last hindsight surprise).
         diverged: True once level 1's state, the movement or one of the main weights is no longer finite.
     """
 
@@ -128,7 +139,8 @@ class Agent:
                  hindsight_rate: float = 3.0, step_limit: float = 0.005, anticipation_gain: float = 8.0,
                  skill_offset: float = 0.05, attention_gain: float = 3.0, attention_cap: float = 10.0,
                  gate_floor: float = 1.0, hold_max: float = 0.9, hold_steepness: float = 3.0,
-                 sample_cap: float = 10.0, init_scale: float = 0.1, hindsight: bool = True, device: str = "cpu"):
+                 sample_cap: float = 10.0, init_scale: float = 0.1, move_delay: int = 1,
+                 hindsight: bool = True, information: bool = True, device: str = "cpu"):
         if int(extero_dim) < 1 or int(proprio_dim) < 1 or int(intero_dim) < 1:
             raise ValueError("extero_dim, proprio_dim and intero_dim must each be >= 1")
         widths = tuple(int(w) for w in widths)
@@ -142,6 +154,10 @@ class Agent:
             raise ValueError("forecast_lr and perception_lr must be <= 1 (the gate's ceiling is 1 / the larger)")
         if not float(sample_cap) > 1.0:
             raise ValueError("sample_cap must exceed 1")
+        if isinstance(move_delay, bool) or not isinstance(move_delay, int) or not 0 <= move_delay < int(settle_steps):
+            raise ValueError("move_delay must be a whole number of settle steps, from 0 to settle_steps - 1")
+        if information and move_delay < 1:
+            raise ValueError("the information term reads a state that has begun to settle: it needs move_delay >= 1")
         self.extero_dim, self.proprio_dim, self.intero_dim = int(extero_dim), int(proprio_dim), int(intero_dim)
         self.widths, self.device = widths, device
         self.band_lo, self.band_hi = float(band_lo), float(band_hi)
@@ -162,7 +178,8 @@ class Agent:
         self.hold_max, self.hold_steepness = float(hold_max), float(hold_steepness)
         self.sample_cap = float(sample_cap)
         self.nlms_floor = 1e-3                       # floor on a unit's gain in the input-weight steps (both levels)
-        self.hindsight = bool(hindsight)
+        self.move_delay = int(move_delay)
+        self.hindsight, self.information = bool(hindsight), bool(information)
 
         # what is sensed: [sight | last movement | fullness | change in fullness]
         e, p, i = self.extero_dim, self.proprio_dim, self.intero_dim
@@ -202,9 +219,14 @@ class Agent:
         self.level_lo, self.level_hi = None, None      # range of fullness seen so far
         self.ant_power = None                   # running mean power of the anticipation
         self.gate = 1.0                         # the learning-rate gate
+        self.gate_perception = 1.0              # its form for the level-1 input weights: the falling side only
         self.gate_fast, self.gate_slow = None, None
         self.news_q = None                      # running news per sight / movement channel
         self.outcome_stats = None               # the outcome's running mean, variance, and the forecast's error
+        # Idea 13: how much each unit has been part of a remembered state whose outcome came in (one count per
+        # closing body, shared out by the units' share of those states' power), and those states' mean power
+        self.evidence = torch.zeros(n1, device=device) if self.information else None
+        self.evidence_power = None
         self.diverged = False
         self.info: dict = {}
         self._B = None
@@ -270,30 +292,70 @@ class Agent:
                 "middle": 0.5 * (self.band_lo + self.band_hi), "half_width": 0.5 * (self.band_hi - self.band_lo)}
 
     def _push(self, z1, level, ctx):
-        """Which units, if more active, would bring the agent's two reads back toward their setpoints.
+        """Minus the slope of the two preferences in the state: which units, if more active, would bring the
+        agent's two reads back toward their setpoints.
 
         The first term is the comfort band read on fullness + the forecast of the next change (Idea 6). The second
         is the anticipation's own setpoint (Idea 11): fullness at the next eventful moment, which is the fullness
         now plus the forecast change until then, should sit at the band's middle. Its error is counted in
         half-widths of the band and goes through the anticipation's weights.
 
-        The result is used only to turn the movement (see ``_settle1``); it is not added to the units' input.
+        The result only turns the movement (see ``_settle_move``); it is never added to the units' input.
         """
-        f = _center(z1) @ ctx["CdT"]
-        f = f + ctx["c0d"]
+        fired = (z1 > 0).to(z1.dtype)
+        # Idea 8: per body, the weights that forecast the change, less their mean over that body's active units
+        rows = ctx["Cd"].unsqueeze(0) - (fired @ ctx["CdT"] / fired.sum(-1, keepdim=True).clamp_min(1.0)).unsqueeze(-1)
+        f = (rows @ z1.unsqueeze(-1)).squeeze(-1) + ctx["c0d"]
         var = torch.exp((z1 @ ctx["WvT"] + self.bv).clamp(LOG_VAR_MIN, LOG_VAR_MAX))
         slope = self._expected_slope(level + f, var)
-        push = -slope @ ctx["Cd"]
-        push = ctx["w1"] * push
-        fired = (z1 > 0).to(z1.dtype)                    # Idea 8: the first term loses its mean over active units
-        push = push - (fired * push).sum(-1, keepdim=True) / fired.sum(-1, keepdim=True).clamp_min(1.0)
-        ahead = z1 @ ctx["CaT"]                          # the forecast change until the next moment: the state's
-        ahead = ahead + ctx["from_level"]                # part and the fullness's part
-        error = ctx["middle"] - (level + ahead)
-        error = error / ctx["half_width"]
-        through_anticipation = error @ self.Ca
-        through_anticipation = self.anticipation_gain * through_anticipation
-        return push + through_anticipation
+        push = -((ctx["w1"] * slope).unsqueeze(1) @ rows).squeeze(1)
+        ahead = level + z1 @ ctx["CaT"] + ctx["from_level"]   # fullness expected at the next eventful moment
+        error = (ctx["middle"] - ahead) / ctx["half_width"]
+        return push + self.anticipation_gain * (error @ self.Ca)
+
+    # ------------------------------------------------------------------ Idea 13: the forecast's own uncertainty
+    @staticmethod
+    def _expected_state(u, theta, spread):
+        """The state expected when each potential is uncertain by ``spread`` (a normal around ``u``), and how fast
+        it grows with the potential. Used while the movement does not exist yet."""
+        d = (u - theta) / spread
+        cdf = 0.5 * (1.0 + torch.erf(d * 0.7071067811865476))
+        pdf = torch.exp(-0.5 * d * d) * 0.3989422804014327
+        return (u * cdf + spread * pdf).clamp_min(0.0), cdf + theta / spread * pdf
+
+    def _information_vote(self, z1, u1, m):
+        """Idea 13: the anticipation's weights are uncertain about states they have rarely been corrected on. The
+        expected free energy of the anticipated outcome is
+
+            G = 1/2 k (e^2 + s_w^2) - 1/2 ln(1 + s_w^2 / s_o^2),      s_w^2 = (v / P) sum_i z_i^2 / (1 + r N_i),
+
+        with ``e`` the anticipation's setpoint error in units of fullness, ``k`` its precision (the fixed gain
+        over the band's half-width), ``v`` the outcomes' variance, ``s_o^2`` the forecast's running squared error,
+        ``r = v / s_o^2``, ``N`` the evidence and ``P`` the remembered states' mean power. The ``e^2`` part is
+        already in ``_push``, which reaches the movement through the lean and the hold's weight. This returns the
+        vote of the two parts in ``s_w^2``, which is added to the movement's vote as it is: toward states the
+        forecast knows little about while ``1 / (s_o^2 + s_w^2) > k``, away from them otherwise. None until memory
+        has closed a moment.
+        """
+        if self.outcome_stats is None or self.evidence_power is None or not self.evidence_power > 0.0:
+            return None
+        k = self.anticipation_gain / (0.5 * (self.band_hi - self.band_lo))
+        # before the movement exists, read the state expected under a unit movement of unknown direction: it
+        # spreads unit i's potential by |Km_i| / sqrt(2)
+        spread = (torch.linalg.vector_norm(self.Km, dim=-1) * 0.7071067811865476).clamp_min(1e-06)
+        zb, slope = self._expected_state(u1, self.theta[0].clamp_min(0.0), spread)
+        unborn = (m == 0).all(-1, keepdim=True)
+        zb = torch.where(unborn, zb, z1)
+        slope = torch.where(unborn, slope, (z1 > 0).to(z1.dtype))
+        _, v, err = self.outcome_stats
+        so2 = err.clamp_min(1e-12)
+        r = v / so2
+        nu = 1.0 / (1.0 + r.unsqueeze(-1) * self.evidence.unsqueeze(0))
+        a = v / self.evidence_power
+        sw2 = zb * zb @ nu.t() * a
+        c = 0.5 / (so2 + sw2) - 0.5 * k
+        push = 2.0 * zb * (c * a @ nu)                   # minus the slope of G's uncertainty terms in the state
+        return push * slope @ self.Km
 
     # ------------------------------------------------------------------ Ideas 2, 3, 7: settling
     def _fire(self, u, layer):
@@ -327,35 +389,57 @@ class Agent:
         n = torch.linalg.vector_norm(d, dim=-1, keepdim=True)
         return torch.where(n > 1e-12, d / n.clamp_min(1e-12), 0.0)
 
-    def _settle1(self, base, level, goal: bool, m_fixed, u_prev):
-        """Relax level 1 from zero. With ``goal`` the push turns the movement; otherwise the movement is ``m_fixed``."""
+    def _settle_move(self, base, level, u_prev):
+        """Ideas 3, 7 and 13: relax level 1 from zero while the movement is inferred.
+
+        The units relax under their input alone: the preferences never enter it. The movement descends one function
+        of free-energy form, written for a second copy of the state that the preferences would pull on, in the limit
+        where that copy is held infinitely close to this one. In that limit all that is left of the pull is ``lean``:
+        the push of the preferences, read on the state as it stands and passed through the units' own time constant.
+        The movement turns toward what the active units' lean asks of it, weighed by the hold, and toward the
+        information vote (Idea 13), which is added as it is. It may start turning after ``move_delay`` steps.
+        """
+        B, n1 = base.shape
+        rate = self.settle_rate
+        u = torch.zeros(B, n1, device=base.device)
+        z = torch.zeros_like(u)
+        lean = torch.zeros_like(u)
+        m = torch.zeros(B, self.proprio_dim, device=base.device)
+        w, mix_u = 1.0 - self.hold, self.hold * u_prev   # a held body weighs this tick's input, and its goal, less
+        w1 = w[:, 0].unsqueeze(-1)
+        KmT, L0T = self.Km.t(), self.L[0].t()
+        ctx = self._push_context(level)
+        vote = None
+        for k in range(self.settle_steps):
+            b = base + _direction(m) @ KmT
+            inhibition = z @ L0T
+            vote = self._information_vote(z, u, m) if self.information else None
+            push = self._push(z, level, ctx)
+            g = w1 * ((z > 0).to(z.dtype) * lean @ self.Km)
+            lean = lean + rate * (w * push - lean)
+            if vote is not None:
+                g = g + vote
+            if k >= self.move_delay:
+                m = self._turn(m, g, k - self.move_delay)
+            target = w * (b - inhibition) + mix_u
+            u = u + rate * (target - u)
+            z = self._fire(u, 0)
+        self.info["information_vote"] = 0.0 if vote is None else float(torch.linalg.vector_norm(vote, dim=-1).mean())
+        return z, m, u
+
+    def _settle_fixed(self, base, m, u_prev):
+        """Idea 3: relax level 1 from zero with the movement fixed."""
         B, n1 = base.shape
         u = torch.zeros(B, n1, device=base.device)
         z = torch.zeros_like(u)
-        lam = self.hold
-        mix = (1.0 - lam, lam)
-        m = m_fixed if m_fixed is not None else torch.zeros(B, self.proprio_dim, device=base.device)
-        KmT, L0T = self.Km.t(), self.L[0].t()
-        mix_u = mix[1] * u_prev
-        b_fixed = None
-        if m_fixed is not None:
-            b_fixed = base + _direction(m_fixed) @ KmT
-        zf = (z > 0).to(z.dtype)
-        ctx = self._push_context(level) if goal else None
-        for k in range(self.settle_steps):
-            if b_fixed is not None:
-                b = b_fixed
-            else:
-                b = base + _direction(m) @ KmT
-            if goal:
-                push = self._push(z, level, ctx)
-                m = self._turn(m, zf * push @ self.Km, k)
-            target = b - z @ L0T
-            target = mix[0] * target + mix_u
+        w, mix_u = 1.0 - self.hold, self.hold * u_prev
+        b = base + _direction(m) @ self.Km.t()
+        L0T = self.L[0].t()
+        for _ in range(self.settle_steps):
+            target = w * (b - z @ L0T) + mix_u
             u = u + self.settle_rate * (target - u)
             z = self._fire(u, 0)
-            zf = (z > 0).to(z.dtype)
-        return z, m, u
+        return z
 
     def _settle2(self, base, u_prev):
         """Relax level 2. It starts from last tick's potentials and always holds a share of them."""
@@ -407,12 +491,18 @@ class Agent:
         self.hold = lam.contiguous()
         self.news_weight = 1.0 - h
 
-    def _gate_value(self):
-        """Learn faster when the anticipation's recent surprise is far from what has become usual."""
+    def _gate_values(self):
+        """Learn faster when the anticipation's recent surprise is far from what has become usual.
+
+        Returns the gate and its form for the level-1 input weights. The gate rises when the recent surprise is
+        above the usual (something changed) and when it is below it (the agent is improving). The input weights
+        take the second side only: they speed up while the agent improves, not on a burst of surprise.
+        """
         if self.gate_fast is None:
-            return 1.0
+            return 1.0, 1.0
         u = (self.gate_fast + 1e-12) / (self.gate_slow + 1e-12)
-        return min(self.gate_max, max(self.gate_floor, self.gate_max * abs(u - 1.0)))
+        return (min(self.gate_max, max(self.gate_floor, self.gate_max * abs(u - 1.0))),
+                min(self.gate_max, max(self.gate_floor, self.gate_max * max(1.0 - u, 0.0))))
 
     def _gate_fold(self, x):
         """Fold one outcome's squared surprise into the gate's two averages, each taking it at no more than
@@ -456,7 +546,7 @@ class Agent:
 
     def _learn_level1(self, o, pred):
         B = o.shape[0]
-        self.gate = self._gate_value()
+        self.gate, self.gate_perception = self._gate_values()
         delta = o - pred
         # Idea 4: the error goes back one step through the forecast weights, to the units that were active
         fired = (self.z1 > 0).to(o.dtype)
@@ -478,8 +568,8 @@ class Agent:
         self.c0[self.i_p] = 0.0
         gain = (self.C ** 2).sum(0)
         # Idea 4: the input weights (from surprise, movement and the last state), with the inputs that formed
-        # the state whose forecast is being corrected
-        gm = g * self.gate
+        # the state whose forecast is being corrected. They take the gate's falling side only (Idea 12).
+        gm = g * self.gate_perception
         x = torch.cat([self.eps, _direction(self.m), self.z1_prev], dim=-1)
         gs = gm / (gain + self.nlms_floor)
         dW = self.perception_lr * gs.t() @ (x / ((x ** 2).sum(-1, keepdim=True) + 1e-06)) / B
@@ -554,6 +644,13 @@ class Agent:
         lr = self.forecast_lr * self.hindsight_rate
         lr = lr * self.gate
         zs = self.mem_z[closing]
+        if self.information:
+            # Idea 13: each closing body is one observation of the anticipation's weights, shared out among the
+            # units by their share of the remembered states' power. Nothing is forgotten.
+            power = float((zs ** 2).sum(-1).mean())
+            self.evidence = self.evidence + float(closing.sum()) * ((zs * zs).mean(0) / (1e-06 + power))
+            self.evidence_power = power if self.evidence_power is None \
+                else (1.0 - STAT_RATE) * self.evidence_power + STAT_RATE * power
         dC = lr * err[closing].t() @ zs / B / (1e-06 + float((zs ** 2).sum(-1).mean()))
         nC = torch.linalg.vector_norm(self.Ca, dim=-1)
         nd = torch.linalg.vector_norm(dC, dim=-1)
@@ -613,7 +710,8 @@ class Agent:
             if self.hindsight:
                 self._correct_anticipation(err, closing)
                 self._correct_perception(err, closing, Ca_old)
-                self.from_level = memory.fit_step(self.from_level, (target - by_level)[closing], self.mem_level[closing])
+                self.from_level = memory.fit_step(self.from_level, (target - by_level)[closing],
+                                                  self.mem_level[closing])
             self.info["surprise_rms"] = float((err[closing] ** 2).mean().sqrt())
         idx = write.nonzero(as_tuple=True)[0]
         if idx.numel():
@@ -632,7 +730,9 @@ class Agent:
         """One tick. ``extero`` is sight, ``proprio`` the last movement, ``intero`` the fullness of each need.
 
         Each is ``(bodies, dim)``. Returns the movement, ``(bodies, proprio_dim)``: a unit direction, or zero.
-        Learning from last tick's forecast happens first, so this tick's state is formed with updated weights.
+        Learning from last tick's forecast happens before the state is formed, so this tick's state is formed through
+        the updated weights. Two things are read before that step, with the weights as the last tick left them: the
+        error that drives the state, and the lateral inhibition.
         """
         if extero.dim() != 2 or proprio.dim() != 2 or intero.dim() != 2:
             raise ValueError("extero, proprio, intero must be (bodies, dim)")
@@ -661,11 +761,12 @@ class Agent:
         top_down = self.z2 @ self.W2.t()
         self._update_hold(eps)
         u_prev = self.u1
-        # Ideas 3 and 7: two settles. The first includes level 2's prediction and the goal, which turns the movement.
+        # Ideas 3 and 7: two settles. The first includes level 2's prediction, and the movement is inferred in it.
         # It gives the movement and the state the forecast reads.
-        z1, m, u1 = self._settle1(base + top_down, intero, goal=True, m_fixed=None, u_prev=u_prev)
-        # The second has neither, and the movement fixed: what the agent perceives, given what it did.
-        z1_up, _, _ = self._settle1(base, intero, goal=False, m_fixed=m, u_prev=u_prev)
+        z1, m, u1 = self._settle_move(base + top_down, intero, u_prev)
+        # The second has no prediction from level 2, and the movement fixed: what the agent perceives, given what
+        # it did.
+        z1_up = self._settle_fixed(base, m, u_prev)
         self._regulate(0, z1)
         u2_prev = self.u2
         if self._t > 0:
@@ -691,7 +792,7 @@ class Agent:
     # ------------------------------------------------------------------ checkpoints
     _TENSORS = ("C", "c0", "K", "Km", "A", "Ka", "W2", "K2", "A2", "Wv", "bv", "Ca", "from_level")
     _OPTIONAL = ("var_ebar", "hold_mbar", "level_lo", "level_hi", "news_q")
-    _SCALARS = ("ant_power", "gate_fast", "gate_slow")
+    _SCALARS = ("ant_power", "gate_fast", "gate_slow", "evidence_power")
 
     def state_dict(self) -> dict:
         """The learned weights and running statistics (not the per-body state)."""
@@ -704,6 +805,7 @@ class Agent:
         for k in self._SCALARS:
             sd[k] = getattr(self, k)
         sd["outcome_stats"] = None if self.outcome_stats is None else [t.clone() for t in self.outcome_stats]
+        sd["evidence"] = None if self.evidence is None else self.evidence.clone()
         sd["widths"] = self.widths
         return sd
 
@@ -725,3 +827,9 @@ class Agent:
             setattr(self, k, sd[k])
         self.outcome_stats = None if sd["outcome_stats"] is None \
             else [t.clone().to(self.device) for t in sd["outcome_stats"]]
+        if self.information:
+            if sd.get("evidence") is None:
+                raise ValueError("the checkpoint was saved without the information term (information=False)")
+            self.evidence = sd["evidence"].clone().to(self.device)
+        else:
+            self.evidence_power = None

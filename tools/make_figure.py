@@ -1,4 +1,5 @@
-"""Draw the learning curves in a results file: one panel per game and delay.
+"""Draw the learning curves in a results file: one panel per game and delay. The runs without the information
+term are not drawn.
 
     python tools/make_figure.py results/acceptance.json docs/acceptance.svg
 
@@ -18,7 +19,7 @@ ON, OFF, BAR = "#1f6fb5", "#9a9a9a", "#222222"
 
 def main(src, dst):
     with open(src) as fh:
-        cells = [c for c in json.load(fh)["cells"] if c["curve"]]
+        cells = [c for c in json.load(fh)["cells"] if c["curve"] and c.get("information", True)]
     keys = []
     for c in cells:
         if (c["game"], c["delay"]) not in keys:
@@ -54,10 +55,11 @@ def main(src, dst):
         ax.set_ylabel("share of bodies in the band")
     for ax in axes[-1, :]:
         ax.set_xlabel("tick (log scale)")
-    handles = [plt.Line2D([], [], color=ON, lw=1.2, label="hindsight on (one line per run)"),
-               plt.Line2D([], [], color=OFF, lw=1.2, ls=(0, (4, 2)), label="hindsight off (where run)"),
-               plt.Line2D([], [], color=BAR, lw=0.8, ls=(0, (1, 2)), label="pass bar")]
-    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False)
+    handles = [plt.Line2D([], [], color=ON, lw=1.2, label="hindsight on (one line per run)")]
+    if any(not c["hindsight"] for c in cells):
+        handles.append(plt.Line2D([], [], color=OFF, lw=1.2, ls=(0, (4, 2)), label="hindsight off (where run)"))
+    handles.append(plt.Line2D([], [], color=BAR, lw=0.8, ls=(0, (1, 2)), label="pass bar"))
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False)
     fig.tight_layout(rect=(0, 0.33 / (2.25 * nrows + 0.45), 1, 1))
     fig.savefig(dst, metadata={"Date": None, "Creator": None} if dst.endswith(".svg") else None,
                 facecolor="white", dpi=110)

@@ -1,6 +1,6 @@
-"""Draw the README's summary figure from a results file: the cue game's learning curves at the four delays the
-control was run at, with the hindsight correction on (mean of the three runs) and off (the control, one run each),
-for a light and a dark page.
+"""Draw the README's summary figure from a results file: the cue game's learning curves at four delays, with the
+hindsight correction on (mean of the three runs) and, where the results file has them, off (the control, one run
+each), for a light and a dark page. The runs without the information term are not drawn.
 
     python tools/make_summary_figure.py results/acceptance.json docs/summary-light.svg docs/summary-dark.svg
 
@@ -40,11 +40,12 @@ def draw(cells, dst, theme):
     fig, ax = plt.subplots(figsize=(9.0, 4.3))
     fig.patch.set_facecolor(c["surface"])
     ax.set_facecolor(c["surface"])
-    cue = [x for x in cells if x["game"] == "cue" and x["curve"]]
+    cue = [x for x in cells if x["game"] == "cue" and x["curve"] and x.get("information", True)]
     bar = cue[0]["bar"]
     ax.axhline(bar, color=c["muted"], lw=1.0)
     ax.text(205000, bar, " pass bar", va="center", ha="left", color=c["ink2"], fontsize=9, clip_on=False)
-    assert sorted(x["delay"] for x in cue if not x["hindsight"]) == list(DELAYS)
+    control = sorted(x["delay"] for x in cue if not x["hindsight"])
+    assert control in ([], list(DELAYS)), control
     for x in cue:                                   # the control: the same agent with the correction switched off
         if not x["hindsight"]:
             t, s = zip(*x["curve"])
@@ -56,7 +57,8 @@ def draw(cells, dst, theme):
         ax.plot(t, s, color=col, lw=2.0, solid_capstyle="round", solid_joinstyle="round")
         handles.append(plt.Line2D([], [], color=col, lw=2.0,
                                   label="food arrives %s" % ("at once" if delay == 0 else "%d time steps later" % delay)))
-    handles.append(plt.Line2D([], [], color=c["off"], lw=1.4, label="look-back switched off"))
+    if control:
+        handles.append(plt.Line2D([], [], color=c["off"], lw=1.4, label="look-back switched off"))
     ax.set_xscale("log")
     ax.set_xlim(1000, 200000)
     ax.set_ylim(-0.03, 1.04)

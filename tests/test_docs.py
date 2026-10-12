@@ -46,14 +46,17 @@ def test_every_relative_link_resolves(rel):
 
 def test_the_readme_sends_a_specialist_to_each_deep_page():
     readme = read("README.md")
-    for target in ("docs/how-it-works.md#the-movement-is-optimized-not-selected",
+    for target in ("docs/how-it-works.md#the-movement-is-inferred-not-selected",
+                   "docs/how-it-works.md#the-movement-also-seeks-information",
                    "docs/how-it-works.md#the-goal-is-a-preferred-range",
                    "docs/how-it-works.md#the-anticipation-has-a-setpoint-of-its-own",
                    "docs/how-it-works.md#anticipation-corrected-in-hindsight",
                    "docs/equations.md#the-movement", "docs/equations.md#the-two-preferences",
+                   "docs/equations.md#the-information-term",
                    "docs/equations.md#events-outcomes-and-the-hindsight-error",
                    "docs/theory.md#predictive-coding", "docs/theory.md#active-inference",
                    "docs/theory.md#reinforcement-learning", "docs/results.md#the-control",
+                   "docs/results.md#what-the-information-term-costs",
                    "docs/results.md#how-the-numbers-were-checked", "docs/limits.md",
                    "docs/limits.md#what-is-built-in", "docs/limits.md#what-would-test-it-further",
                    "#for-researchers"):
@@ -63,12 +66,12 @@ def test_the_readme_sends_a_specialist_to_each_deep_page():
 def test_the_size_the_readme_gives():
     """The agent is pcagent/agent.py and pcagent/memory.py; the games, the scoring and the runner are not counted."""
     lines = sum(len(read(p).splitlines()) for p in ("pcagent/agent.py", "pcagent/memory.py"))
-    assert "under 800 lines of Python" in read("README.md") and lines < 800, lines
+    assert "under 900 lines of Python" in read("README.md") and lines < 900, lines
 
 
 def test_the_code_names_its_parts_as_the_page_does():
-    """The comments in the agent say "Idea 1" to "Idea 12"; docs/how-it-works.md gives the same numbers."""
+    """The comments in the agent say "Idea 1" to "Idea 13"; docs/how-it-works.md gives the same numbers."""
     how, code = read("docs/how-it-works.md"), read("pcagent/agent.py")
-    for n in range(1, 13):
+    for n in range(1, 14):
         assert re.search(r"Ideas? [0-9, and]*\b%d\b" % n, how), "Idea %d is not on the page" % n
         assert re.search(r"Idea %d\b" % n, code), "Idea %d is not in the code" % n

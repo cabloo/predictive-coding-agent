@@ -1,7 +1,7 @@
 # How the agent works
 
 This page explains every part of the agent in [`pcagent/agent.py`](../pcagent/agent.py), in words. The code
-marks its parts as "Idea 1" to "Idea 12", and the same numbers are given here. The same parts as update rules
+marks its parts as "Idea 1" to "Idea 13", and the same numbers are given here. The same parts as update rules
 are in [equations.md](equations.md). For the short account, see the [README](../README.md); for how the design
 relates to predictive coding, active inference and reinforcement learning, see [theory.md](theory.md).
 
@@ -11,11 +11,12 @@ relates to predictive coding, active inference and reinforcement learning, see [
 - [The state is found by settling](#the-state-is-found-by-settling)
 - [The input weights learn from the forecast's error](#the-input-weights-learn-from-the-forecasts-error)
 - [The goal is a preferred range](#the-goal-is-a-preferred-range)
-- [The movement is optimized, not selected](#the-movement-is-optimized-not-selected)
+- [The movement is inferred, not selected](#the-movement-is-inferred-not-selected)
 - [Anticipation, corrected in hindsight](#anticipation-corrected-in-hindsight)
 - [The anticipation has a setpoint of its own](#the-anticipation-has-a-setpoint-of-its-own)
+- [The movement also seeks information](#the-movement-also-seeks-information)
 - [Regulators](#regulators)
-- [The control switch](#the-control-switch)
+- [The two switches](#the-two-switches)
 
 ## The task in detail
 
@@ -39,9 +40,9 @@ whose fullness is inside the band. 32 bodies run in parallel and share one set o
 
 The agent is told none of the rules. It is not told that trials exist, how long the delay is or which tick
 carries a cue, and it is never given its score. It is built with the comfort band, which is the band the score is
-computed from. At any delay above 0, when the agent moves, no food arrives, and by the time it
-does, the cue has been out of sight for `delay` ticks. One-tick prediction errors alone do not teach this agent
-the task (see [the control](results.md#the-control)).
+computed from. At any delay above 0, no food arrives when the agent moves. By the time the food
+arrives, the cue has been out of sight for `delay` ticks. Whether the agent can learn this without its memory of
+one moment is what [the control](results.md#the-control) tests.
 
 There are two games, both in [`pcagent/worlds.py`](../pcagent/worlds.py):
 
@@ -61,9 +62,9 @@ One call to `Agent.step` is one tick. In order:
 2. **Learning from the last tick.** The forecast made on the previous tick is now known to be right or wrong,
    so the forecast weights and the input weights that formed the previous state learn from its error.
 3. **Settling, twice.** The new state is found by a relaxation driven by the prediction error, the previous
-   state, the movement and the anticipation fed back from the last tick. The first relaxation includes the goal
-   and the second level's prediction, and gives the movement. The second, with that movement fixed and both left
-   out, gives what the agent perceives.
+   state, the movement and the anticipation fed back from the last tick. In the first relaxation the movement is
+   inferred, and the second level's prediction is part of the input. It gives the movement. The second, with
+   that movement fixed and the second level's prediction left out, gives what the agent perceives.
 4. **The second level.** It learns to predict the first level's state, then settles on the error of that
    prediction.
 5. **Memory.** Every body adds this tick's change in fullness to its open outcome. A body for which this tick
@@ -87,9 +88,11 @@ term is left out here; it is used when the weights learn and, for the change in 
 is read). Units whose input weights overlap inhibit each other. Forty small steps of this relaxation give the
 state.
 
-The relaxation runs twice per tick: once with the goal and the second level's prediction, which gives the
-movement and the state the forecast reads, and once with neither and with that movement fixed, which gives the
-state that the second level predicts and that memory stores.
+The relaxation runs twice per tick. In the first, the second level's prediction is part of the input and the
+movement is inferred as the units relax ([below](#the-movement-is-inferred-not-selected)); it gives the movement
+and the state the forecast reads. The second has that movement fixed and no prediction from the second level;
+it gives the state that the second level predicts and that memory stores. The goal is in the input of neither:
+it acts on the movement only.
 *(Idea 3; [in equations](equations.md#settling))*
 
 ## The input weights learn from the forecast's error
@@ -109,24 +112,42 @@ band's width. Inside the band the cost is zero. The agent never receives this co
 cost at the fullness it forecasts for the next tick, averaged over how uncertain that forecast is (it learns
 the forecast's variance too). *(Idea 6; [in equations](equations.md#the-two-preferences))*
 
-## The movement is optimized, not selected
+## The movement is inferred, not selected
 
-While the state settles, the movement follows the gradient of the agent's preferences. The slope of the cost is
-carried through the forecast weights to the active units, which says which of them would bring the forecast
-fullness back toward the band if they were more active. From those units it is carried through the movement's
-own input weights, which gives a direction, and the movement turns toward it: fast early in the settle, slowly
-late. Nothing pushes the units themselves, so the state feels the goal only through the movement it settles on.
+While the state settles, the movement is inferred along with it. The agent's preferences are written as priors
+in one function of free-energy form, and the movement follows that function's slope.
+
+**The push.** The slope of the cost is carried through the forecast weights to the units. That gives, for every
+unit, a *push*: how much the forecast fullness would move back toward the band if that unit were more active.
+
+**The function.** Besides the movement, the function has one more argument: a second copy of the state, which
+the preferences are allowed to pull on. It charges for two things. One is the copy differing from the state
+that the input alone settles on. The other is the copy's forecasts of fullness missing the preferences. If the
+first charge were small, the preferences would bend what the agent perceives toward what it wants. The agent
+takes the opposite limit: the first charge is made infinitely steep, so the copy cannot leave the state at all.
+There is then one state, formed by the input alone, and the preferences move the body and nothing else. In
+that limit the function's slope is the slope of the preferences' cost itself, carried back from the units to the
+movement through the agent's own weights.
+
+**The lean.** One thing survives that limit: how hard the preferences lean on each unit. The *lean* is the push,
+read on the state as it stands and smoothed by the same time constant the units relax with. In the limit, the
+slope of the function in the movement is the lean of the active units, carried through the movement's own input
+weights. That gives a direction, and the movement turns toward it: fast early in the settle, slowly late. It
+does not turn on the first settle step, when no unit is active yet.
 
 There is no list of candidate movements, no search and no sampling, and no distribution over movements is
-formed. The movement is a point estimate, found by approximate gradient descent on the agent's preference cost
-through its own learned forecast: the gradient through a learned forward model (Jordan and Rumelhart, 1992)
-sets the action itself, with no controller in between (see [theory.md](theory.md#active-inference)). The gradient is approximate. It treats the inhibition
-between units, the hold and the thresholds as fixed.
+learned or updated. The movement is a point estimate. The slope it follows is the function's own, with two
+things the function takes from perception as fixed numbers and does not differentiate: the inhibition between
+units, as the state has settled it, and the forecast's variance. The descent is 39 annealed steps (the settle's
+40, less the first), taken while the state is itself still settling, so the movement returned is where that
+descent stands at the end and not a minimum. The function, and what it leaves out, are in
+[theory.md](theory.md#active-inference).
 
 The movement's input weights do double duty. Forward, the movement drives the state through them. Backward,
-their transpose carries the push to the movement. They learn from prediction errors like the other input
+their transpose carries the lean to the movement. They learn from prediction errors like the other input
 weights, so the mapping from a cue to a movement is learned there and in the forecast weights, not in a separate
-policy. No noise is added to the movement: the first movements are whatever the random initial weights produce.
+policy. No noise is added to the movement. Before anything is learned, the movements are whatever the random
+initial weights produce.
 *(Idea 7; [in equations](equations.md#the-movement). Idea 8 is a detail of the forecast of the change in
 fullness: it reads the state with its mean over the active units removed.)*
 
@@ -158,9 +179,9 @@ flowchart LR
   remembered one. It holds what leaked away over the interval and whatever was eaten.
 - **The forecast of an outcome has two parts.** One is a line read from the fullness at the remembered moment,
   `slope × fullness + offset`, fitted across the bodies to the outcomes themselves. It carries what the fullness
-  alone tells, which is mostly the leak and the usual meal. It is a baseline that needs many bodies: one body
-  alone could not fit it. The other is the anticipation, read from the
-  remembered state. It is left with what the line cannot tell: what this cue and this movement change.
+  alone tells, which is mostly the leak and the usual meal. It is a baseline that needs many bodies; one body
+  alone could not fit it. The other part is the anticipation, read from the remembered state. It is left with
+  what the line cannot tell: what this cue and this movement change.
 - **Hindsight sets a target.** When the next eventful moment arrives, the error is `G` minus the line minus
   `a(remembered state)`, with the anticipation read from the remembered state by the weights as they are now.
   The anticipation's weights step by that error with the delta rule, at three times the forecast's rate and
@@ -169,8 +190,10 @@ flowchart LR
   with the anticipation that was fed in at that moment. The line moves a twentieth of the way toward the
   least-squares fit of the outcomes, across the bodies that close a moment on that tick. No other weight is
   corrected.
-- **What is read when the agent acts.** The remembered moment is never read when the agent acts. Two running
-  averages kept beside it are read instead: how much outcomes vary, and how well the forecast predicts them.
+- **What is read when the agent acts.** The remembered moment is never read when the agent acts. Running
+  statistics kept beside it are read instead: how much outcomes vary, how well the forecast predicts them, and,
+  for [the information term](#the-movement-also-seeks-information), how often each unit has been part of a
+  moment that an outcome closed.
 
 "Hindsight" names this one correction. It is not hindsight experience replay, and it is not hindsight credit
 assignment in the sense of Harutyunyan et al. (2019); see [theory.md](theory.md#reinforcement-learning).
@@ -186,11 +209,49 @@ next meal is therefore already wrong when it is made, and one that would overfil
 The forecast behind this read is trained only at eventful moments, but it is read on every tick, from the state
 as it settles.
 
-The push that turns the movement has two terms. The first is the band's slope, through the weights that
+The push behind the lean has two terms. The first is the band's slope, through the weights that
 forecast the next change in fullness. Its weight is the one-tick forecast's share of the two forecasts' skill,
 `(s1 + 0.05) / (s1 + sG + 0.05)`, where a skill is the fraction of a target's variance its forecast explains.
 The second is the setpoint's error, through the anticipation's weights, multiplied by a fixed gain of 8.
 *(Idea 11; [in equations](equations.md#the-two-preferences))*
+
+## The movement also seeks information
+
+The anticipation is a learned read of the state, corrected one outcome at a time. It can be trusted on the
+kinds of state it has been corrected on, and on others it is a guess. The agent keeps track of which is which,
+and the movement uses it. *(Idea 13; [in equations](equations.md#the-information-term))*
+
+- **Evidence, one count per unit.** Each time a body's remembered moment is closed by its outcome, the
+  anticipation's weights have seen one more observation. A tick's observations are shared out among the units
+  by how much each unit contributed to the remembered states (its share of their summed squares), and added to
+  the unit's *evidence*. Nothing is ever taken away from it.
+- **The forecast's uncertainty.** From the evidence the agent works out how uncertain the anticipation is at the
+  state it is in now. A state of ordinary size made of units with no evidence is as uncertain as outcomes
+  themselves vary. Each observation of a unit shrinks that unit's share. This is the uncertainty a linear read
+  has about its own weights when it treats them as unknown, independent of each other, and its targets as noisy.
+- **The expected free energy of the outcome.** With an uncertain forecast, the preference for the setpoint has
+  two more consequences, and the movement follows the slope of both. *Expected cost:* an uncertain forecast is
+  expected to miss the setpoint by more, which counts against moving into unfamiliar states. *Information:* the
+  outcome of an unfamiliar state would teach the weights more, which counts for it. No constant is added to
+  balance them. The balance comes from the preference's own spread, which is set by hand: the unfamiliar is
+  sought while the forecast's whole spread, its error plus its uncertainty, is tighter than the spread of the
+  preference, and avoided otherwise.
+- **Read before the movement exists.** Early in the settle there is no movement yet, so there is no state that
+  reflects one. Until a body's movement exists, its uncertainty is read on the state *expected* under a
+  movement of unknown direction, in which each unit's potential is blurred by the size of that unit's own
+  movement weights. Once the movement exists, the read is on the state itself.
+- **One more vote.** The slope is carried to the movement through the same input weights as the lean, and added
+  to it as it is: the lean is smoothed and weighed by the hold, and this vote is neither. So the movement does
+  not descend the sum of the two; it follows both slopes, with different weights. Until memory has closed its
+  first moment the term casts no vote.
+
+This is the only thing in the agent that makes it try something for what it would learn. It is not noise: the
+vote is a deterministic function of the state and of what the weights have been corrected on.
+
+In the two games here the agent does not need it. The same agent without this term masters every game as well,
+with less than a third of the time outside the band on the way and fewer dips after mastery
+([results](results.md#what-the-information-term-costs)). The term is part of the agent
+because without it nothing in the agent seeks information.
 
 ## Regulators
 
@@ -198,7 +259,10 @@ Five regulators keep learning stable *(Idea 12; [in equations](equations.md#gain
 
 - an attention gain (1 to 10) on the prediction error of inputs whose error would change the agent's other
   forecasts (it is not an estimate of precision, and it is fixed at 1 for the fullness);
-- one learning-rate gate (1 to 10) that opens when the outcome forecast's error is far from its usual size;
+- one learning-rate gate (1 to 10) that opens when the outcome forecast's error is far from its usual size, in
+  either direction. The first level's input weights, in their every-tick step, take one side of it only: their
+  rate rises while that error is falling below its usual size, when the agent is improving, and stays at its
+  base value when the error rises;
 - a hold, set per body on each tick, that keeps up to 90% of the first level's previous potentials through
   ticks with smaller prediction errors than usual;
 - first-level thresholds that weigh each tick by the size of its prediction errors;
@@ -206,10 +270,14 @@ Five regulators keep learning stable *(Idea 12; [in equations](equations.md#gain
   error: each takes a moment's sample at no more than 10 times its own value, so a single wild outcome cannot
   wipe out the forecast's measured skill.
 
-## The control switch
+## The two switches
 
 Switching the hindsight correction off is one argument, `Agent(..., hindsight=False)`. Everything else stays the
 same: memory still records moments and outcomes, but corrects no weight, so the anticipation's weights and the
-line stay at zero and the second preference has nothing to act through. The learning-rate gate keeps running,
-on the size of the outcomes themselves. The gray curves in the figures are that agent, and
-[the control](results.md#the-control) reports what it learned and what that does and does not show.
+line stay at zero and the second preference has nothing to act through. The information term then casts no vote
+either, because no evidence is ever added. The learning-rate gate keeps running, on the size of the outcomes
+themselves. [The control](results.md#the-control) says what that agent can and cannot show.
+
+Switching the information term off is `Agent(..., information=False)`. The movement then follows the lean alone,
+and no evidence is kept. Nothing else changes.
+[What the information term costs](results.md#what-the-information-term-costs) compares the two.

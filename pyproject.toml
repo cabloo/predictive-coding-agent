@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "predictive-coding-agent"
-version = "0.1.0"
-description = "A predictive-coding agent that learns to act for a delayed outcome by hindsight anticipation"
+version = "0.2.0"
+description = "A predictive-coding agent that learns to act for a delayed outcome: its movement descends a free energy, and a one-slot memory corrects its anticipation in hindsight"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
