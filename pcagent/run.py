@@ -2,7 +2,6 @@
 
     python -m pcagent.run --game cue --delay 2 --seed 1
     python -m pcagent.run --game two-need --delay 2 --seed 3 --out mine.json
-    python -m pcagent.run --game cue --delay 2 --seed 1 --no-information     (the agent without the information term)
     python -m pcagent.run --game cue --delay 2 --seed 1 --no-hindsight       (the control)
 
 The command line runs the agent on the CPU in one thread. A run that masters continues for 100,000 ticks (or 20
@@ -25,7 +24,7 @@ from .worlds import GAMES, anchors
 
 
 def run(game_name="cue", delay=0, seed=1, ticks=200_000, bodies=32, curve_every=1000, anchor_ticks=3000,
-        hold_x=20.0, hold_min=100_000, hindsight=True, information=True, log=print):
+        hold_x=20.0, hold_min=100_000, hindsight=True, log=print):
     """Run one agent on one game. Returns the anchors, the bar, the curve, the tick of mastery (or None) and the hold.
 
     The curve has one point per ``curve_every`` ticks: the mean score over those ticks. Ticks after the last full
@@ -41,8 +40,7 @@ def run(game_name="cue", delay=0, seed=1, ticks=200_000, bodies=32, curve_every=
     log("%s game, delay %d, seed %d: oracle %.4f, floor %.4f, bar %.4f"
         % (game_name, delay, seed, anch["oracle"], anch["floor"], bar))
     game = make(bodies, seed)
-    agent = Agent(game.n_extero, game.n_proprio, game.n_intero, seed=seed, hindsight=hindsight,
-                  information=information)
+    agent = Agent(game.n_extero, game.n_proprio, game.n_intero, seed=seed, hindsight=hindsight)
     curve, hits, n, t0 = [], 0.0, 0, time.monotonic()
     with torch.inference_mode():
         for t in range(ticks):
@@ -68,8 +66,7 @@ def run(game_name="cue", delay=0, seed=1, ticks=200_000, bodies=32, curve_every=
         log("mastered at tick %d; held %s%d ticks, R %s%.1f; held: %s"
             % (hold["ttm"], ">= " if hold["censored"] else "", hold["hold"], ">= " if hold["censored"] else "",
                hold["R"], {True: "yes", False: "no", None: "undetermined (the run ended first)"}[hold["held"]]))
-    return {"game": game_name, "delay": delay, "seed": seed, "hindsight": hindsight, "information": information,
-            "anchors": anch, "bar": bar,
+    return {"game": game_name, "delay": delay, "seed": seed, "hindsight": hindsight, "anchors": anch, "bar": bar,
             "curve": curve, "ticks_to_mastery": None if hold is None else hold["ttm"], "hold": hold,
             "diverged": agent.diverged}
 
@@ -77,7 +74,7 @@ def run(game_name="cue", delay=0, seed=1, ticks=200_000, bodies=32, curve_every=
 def as_cell(res):
     """One run in the format of a results file's cell."""
     return {"game": res["game"], "delay": res["delay"], "seed": res["seed"], "hindsight": res["hindsight"],
-            "information": res["information"], "bar": res["bar"], "oracle": res["anchors"]["oracle"],
+            "bar": res["bar"], "oracle": res["anchors"]["oracle"],
             "floor": res["anchors"]["floor"], "diverged": res["diverged"],
             "curve": [[c["tick"], c["score"]] for c in res["curve"]]}
 
@@ -91,8 +88,6 @@ def main(argv=None):
     ap.add_argument("--bodies", type=int, default=32)
     ap.add_argument("--no-hindsight", dest="hindsight", action="store_false",
                     help="the control: memory corrects no weight")
-    ap.add_argument("--no-information", dest="information", action="store_false",
-                    help="the comparison: the information term casts no vote")
     ap.add_argument("--out", default=None, help="write the run here as a results file (JSON)")
     a = ap.parse_args(argv)
     if a.ticks < 1000:
@@ -100,7 +95,7 @@ def main(argv=None):
     if a.delay < 0:
         ap.error("--delay must be 0 or more")
     torch.set_num_threads(1)
-    res = run(a.game, a.delay, a.seed, a.ticks, a.bodies, hindsight=a.hindsight, information=a.information)
+    res = run(a.game, a.delay, a.seed, a.ticks, a.bodies, hindsight=a.hindsight)
     if a.out:
         with open(a.out, "w") as fh:
             json.dump({"cells": [as_cell(res)]}, fh)

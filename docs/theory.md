@@ -42,27 +42,41 @@ passes through.)
   Bogacz (2017) show that a predictive-coding network for supervised learning, by relaxing its error units,
   arrives at approximately this quantity, so that the weight change needs only local Hebbian plasticity. This
   agent computes it directly, with the transpose of the forecast weights.
-- Ordinary learning is local in time: each update uses one tick's error. The hindsight step is the exception.
-  It applies an error that is known only later to a stored copy of one earlier moment. Seen from a synapse,
-  that step has three parts: a scalar error that arrives later, the unit's own anticipation weight, and the
-  stored input. A neuroscientist may read it as a three-factor rule with a one-slot eligibility trace that does
-  not decay (Gerstner et al., 2018). In the model's own terms it is a prediction error sent back one step
+- Ordinary learning is local in time: each update uses one tick's error. The hindsight step is the exception. It
+  applies an error that is known only later to a stored copy of one earlier moment. Seen from a synapse, that step
+  has three parts: a scalar error that arrives later, the unit's own anticipation weight, and the stored input. A
+  neuroscientist may read it as a three-factor rule with a one-slot eligibility trace, in the neo-Hebbian sense,
+  that does not decay (Gerstner et al., 2018). In the model's own terms it is a prediction error sent back one step
   through the weights that made the prediction.
-- Errors are not weighted by an estimated precision (an inverse variance). Three hand-shaped gains stand where
-  precision would, and none of them is an estimated one. An attention gain multiplies the sensory prediction
-  errors that drive the state; it measures how much a channel's error would change the agent's other forecasts,
-  not the error's variance, so it is not attention as precision in the sense of Feldman and Friston (2010). A
-  skill weight, a hand-chosen ratio of two running skill estimates, sets the balance between the two
-  preferences. A fixed gain of 8 multiplies the setpoint's error; in the cost it is a fixed precision of 32 on
-  the setpoint, set by hand. Two uncertainties are estimated, and each is used in one place only: the learned
-  variance of the one-tick forecast, where the comfort band is read, and the uncertainty of the anticipation's
-  weights, in the information term. Neither weights a prediction error.
-- One global number, the learning-rate gate, multiplies the learning rate of the first level's forecast weights,
-  most of its input weights, and memory's corrections of the anticipation's weights and of the input weights (the
-  fit of the line is not gated). The every-tick step of the input weights takes one side of it only: it is sped
-  up while the outcome forecast's error is falling, and not when it rises. The gate changes the size of a step
-  and never its direction. It is a global signal, not a local one, and can be read as a global third factor on
-  the learning rate.
+- Precision scales learning, not inference. Each error that trains the one-tick forecast, the anticipation and the
+  first level's input weights is multiplied by its own estimated precision: the inverse of its running mean square,
+  one per sensed channel for the one-tick forecast and one for the hindsight error. On average over recent errors,
+  that is the precision at which the free energy of a Gaussian error is lowest, the fixed point of the rule by which
+  Bogacz (2017) learns a variance parameter. In predictive coding the same precision also weights the errors that
+  drive the state. Here it does not: the errors that drive the state carry an attention gain instead, which measures
+  how much a channel's error would change the agent's other forecasts, not the error's variance, so it is not
+  attention as precision in the sense of Feldman and Friston (2010). The second level learns from its own prediction
+  error without a precision.
+- What precision changes is narrow. For one forecast row it only rescales the step, and the row's fixed point is
+  unchanged. Memory's precision is one number on the hindsight path. It changes what is learned only where errors
+  meet: in the input weights shared by all the rows and by the hindsight error.
+- The precision is per channel and the same in every state: it is not a function of the state. It is clipped to
+  between 1 and 10 by hand, so a channel whose mean squared error exceeds 1 is learned from at the base rate and
+  not more slowly. No adaptive global gain sets how fast the agent learns; the base rates are fixed.
+- In these games most precisions sit at the ceiling from early in learning
+  ([results](results.md#where-the-precisions-sat)). The errors of the fullness, its change and memory are small in
+  the units the games use; the fullness's precision reaches the ceiling within its first 180 ticks. Sight's error is
+  large only on cue ticks, and its one precision, shared by every tick, follows how often a cue is shown. So in
+  practice the precision acts mostly as a tenfold rate, and it depends on the units of the senses. A running mean
+  square also mixes the forecast's own misfit with noise, so the precision falls when the forecast is wrong, early
+  in learning or after a change. The agent keeps no estimate of its uncertainty about the weights, which is what
+  raises a Bayesian learning rate at those times (a Kalman gain, or the learning rate of the hierarchical Gaussian
+  filter of Mathys et al., 2011).
+- Two other gains stand where a precision would, and neither is an estimated precision. A skill weight, a
+  hand-chosen ratio of two running skill estimates, sets the balance between the two preferences. A fixed gain of 8
+  multiplies the setpoint's error; in the cost it is a fixed precision of 32 on the setpoint, set by hand. The
+  learned variance of the one-tick forecast is used in one place only, where the comfort band is read. It weights no
+  error, and it is kept apart from the precision of the same channel, which is one running mean over all states.
 - The fullness is not one sense among equals. It is the only sense with preferences, the only one summed into
   the delayed target, it is left out of event detection, its attention gain is fixed at 1, and its change is
   given to the agent as a channel of its own. The current fullness is also read directly in three places, none
@@ -85,46 +99,34 @@ of what Friston et al. (2015) call extrinsic value (pragmatic value in later wor
 the comfort band and falls off outside it, and the expectation is taken under the forecast's learned normal
 density. The cost of the point is the negative log of a Gaussian preferred density, centered on the band's
 middle with a precision of 32 (a standard deviation of about 0.18 in units of fullness), read at a point
-forecast. The part of its expectation that depends on the state is taken up by the information term below.
+forecast. Its expectation under the forecast's error would add a constant if that error's
+variance were the same in every state, and no uncertainty about the forecast's weights is kept.
 
 **One function, taken in a limit.** The preferences are priors inside one function of free-energy form, of the
 movement and of a second copy of the state ([equations](equations.md#the-movement)). The function charges the
 copy, with a precision, for departing from the state that the input supports, and it charges the copy's
 forecasts for missing the preferences. At a finite precision, descending it would do what a prior does in
 active inference (a prior over hidden states and their motion in Friston et al., 2010; over outcomes in the
-later discrete-time forms): shift the state estimate toward what is preferred, and move the body until the
-senses support the shifted estimate (Friston, Samothrakis and Montague, 2012). The agent takes the precision to
+later discrete-time forms): shift the state estimate toward what is preferred, and move the body until its
+input supports the shifted estimate. Here that input is the movement's own, within one tick; in active inference
+the senses do it, through the world (Friston, Samothrakis and Montague, 2012). The agent takes the precision to
 infinity. The evidence of the senses is then infinitely more precise than the preferences, the state is formed
 by its input alone, and the preferences only move the body. What the movement follows is the limit of the
 function's own slope, read on the state while it relaxes.
 
-What that amounts to should be said plainly. In the limit taken, the slope is exactly minus the gradient of
-the preferences' cost through the agent's own forward mapping from movement to state (Jordan and Rumelhart,
-1992), with the inhibition and the variance frozen and the push smoothed by the units' time constant. It sets
-the action itself and trains no controller. The function is the finite-precision family of which this is the
-limit, and no member of that family was run. It is not derived as a bound on surprise under a generative
-model: its first term is the energy of the recognition circuit, not a sensory prediction error. And it places
-an expected cost of predicted outcomes as a prior inside a function of the present state, which is the pattern
-of the generalized free energy (Parr and Friston, 2019).
+What that amounts to should be said plainly. In the limit taken, once the settle has converged and with the
+active units, the inhibition and the variance held fixed, the movement descends exactly the gradient of the
+preferences' cost through the agent's own forward mapping from movement to state (Jordan and Rumelhart, 1992).
+While the state is still settling it follows a lagged estimate of that gradient, smoothed by the units' time
+constant. It sets the action itself and trains no controller. The function is the finite-precision family of
+which this is the limit, and no member of that family was run. It is not derived as a bound on surprise under a
+generative model: its first term is the energy of the recognition circuit, not a sensory prediction error. It
+loosely resembles the generalized free energy (Parr and Friston, 2019), which also places preferences over
+predicted outcomes inside one function; that function also yields an ambiguity term, which this one lacks.
 
 The limit is also the opposite of the regime that active inference ties to movement. There, a self-made
 movement goes with a lowering of the precision of its sensory consequences (sensory attenuation; Brown et al.,
 2013). Here the senses are taken to be infinitely precise against the preferences.
-
-**An expected free energy, for one outcome.** The agent keeps an uncertainty about the weights that read the
-anticipation from the state, and with it an expected free energy can be written for the anticipated outcome
-([equations](equations.md#the-information-term)). Beyond the squared error it has two terms. One is the extra
-expected cost that the forecast's uncertainty adds: the squared miss expected under the forecast's own spread.
-The other is the information the outcome is expected to give about those weights, which is the expected
-information gain of a linear Gaussian model (MacKay, 1992) and the kind of epistemic value that Schwartenbeck
-et al. (2019) call novelty: it concerns parameters, not hidden states. Written as risk plus ambiguity, the same
-function results up to constants. No constant is added for the balance between the two terms. It is set by the
-preference's precision of 32, which is set by hand: the unfamiliar is sought while the forecast's whole spread,
-its error variance plus its uncertainty about its weights, is below 1/32, and avoided otherwise.
-
-The movement does not descend the sum. It follows the slopes of the parts with different weights: the part in
-the squared error through the lean, which is smoothed by the units' time constant and scaled by the hold's
-weight, squared; the two parts in the uncertainty directly and unscaled.
 
 **Where it differs.**
 
@@ -142,30 +144,19 @@ weight, squared; the two parts in the uncertainty directly and unscaled.
 - The movement is a command that the body executes and reports back. It enters the state as an input, and the
   slope reaches it through that input's weights. In the continuous formulation (Friston et al., 2010) action
   sees sensory prediction errors, and reflexes fulfill a predicted sensation.
-- The expected free energy is narrow. It is written for one predicted outcome, the change in fullness up to the
-  next eventful moment, and for one movement, the one being inferred: no sequences of movements are compared
-  and nothing is planned beyond that outcome. Its uncertainty is over the weights of one linear read, kept per
-  unit as if the weights were independent. It has no term for uncertainty about the state, none for sight, and
-  none for the one-tick read of the comfort band.
-- The uncertainty that drives the information term does not set how fast the same weights learn. The evidence
-  is a count kept beside the weights; the weights themselves take a delta-rule step with a hand-set rate and a
-  step limit. In a Bayesian treatment one posterior would do both. The count also assumes fixed features and a
-  fixed contingency. Neither holds here: the input weights that define the units keep moving, and nothing is
-  ever taken off the count, so the term goes quiet whether or not the forecast is still right. And the error
-  variance it is set against is a running squared error, which holds misfit and weight error as well as noise.
-- The information term's vote is not part of the limit above. It reaches the movement directly, through the
-  units' own slope and the movement's input weights, as an approximate gradient. What was run prices the term
-  at this one weighting against the preferences.
+- There is no epistemic term. In active inference the expected free energy of a policy includes the
+  information its outcomes would give (epistemic value; Friston et al., 2015), about hidden states or, as
+  novelty, about parameters (Friston et al., 2016; Schwartenbeck et al., 2019), and that is what drives directed
+  exploration there. Nothing in
+  this agent seeks information. The movement follows the preferences alone, for one predicted outcome, the
+  change in fullness up to the next eventful moment: no sequences of movements are compared and nothing is
+  planned beyond that outcome.
 - The shape of the band's preferred density and the precision of 32 are set by hand. The weight between the two
   preferences is a hand-chosen ratio of two running skill estimates, and both preferences are scaled per body
   and tick by the hold (squared, in the slope). Neither is a precision estimate, and with them the preferred
   densities are not fixed.
 - No posterior over movements or over hidden causes is formed. The state and the movement are point
-  estimates. (Before a body's movement exists, the information term reads the state under a fixed, uniform spread
-  of directions. That spread is not learned or updated.)
-- In the two games here, the information term is not what makes the agent work. The same agent without it
-  masters every game, with less than a third of the time outside the band on the way and a steadier score
-  afterward ([results](results.md#what-the-information-term-costs)).
+  estimates.
 
 **Anticipation.** The second preference makes the regulation anticipatory: the movement at a cue is set by a
 learned forecast of where the fullness will be at the next eventful moment
@@ -183,11 +174,12 @@ predicted neither by the forecast nor by a running mean. Event segmentation theo
 the boundaries of perceived events at transient rises in prediction error, and the agent's rule is a crude form
 of that idea. The agent does not model when events will come. It detects them.
 
-In the two games here that rule was not put to a test. Sight is blank except on cue ticks, and the movement is
-never news, so the eventful ticks are exactly the cue ticks, and every interval between two of them holds one
-decision and one outcome. A detector that fired whenever sight was not blank would segment these games the same
-way. An event clock of this kind is, in reinforcement-learning terms, a semi-Markov step (Sutton, Precup and
-Singh, 1999).
+In the two games here that rule was not put to a test. Sight is blank except on cue ticks, and the movement is never
+news, so no tick between two cues is eventful, and nearly every cue tick is (a body lets a cue pass when the
+forecast had already partly predicted it, on 0.03% of its cue ticks). So nearly every interval between two events
+holds one decision and one outcome, and where a body lets a cue pass, its interval holds two. A detector that fired
+whenever sight was not blank would segment these games almost the same way. An event clock of this kind is, in
+reinforcement-learning terms, a semi-Markov step (Sutton, Precup and Singh, 1999).
 
 Learning then runs backward from one event to the one before it: the outcome measured at the later event
 becomes the target for a forecast made at the earlier one. Learning that looks back from an outcome to what
@@ -197,42 +189,51 @@ stored state per body, one kind of outcome, and attribution to the latest event 
 
 ## Reinforcement learning
 
-**What the forecast is.** The outcome forecast, the line plus the anticipation, is a general value function
-(Sutton et al., 2011). The signal it sums is the change in fullness, the sum ends at the next eventful moment,
-and it is learned by regression on the measured sum under the agent's own behavior: a Monte Carlo target, with
-no bootstrapping from the next prediction (compare Sutton, 1988). The line is a baseline fitted across the 32
-bodies, which leaves the anticipation with the residual that depends on the cue and the movement. The
-remembered moment is a one-slot eligibility trace.
+**What the forecast is.** The outcome forecast, the line plus the anticipation, is an action-conditioned general
+value function (Sutton et al., 2011). It is read from a state formed with the movement as one of its inputs, so it
+estimates the outcome of the move just made, for one cumulant, the change in fullness, summed to the next
+eventful moment. It is learned by regression on the measured sum under the agent's own behavior: a Monte Carlo
+target, with no bootstrapping from the next prediction (compare Sutton, 1988). The line is a baseline in the
+fullness, fitted across the 32 bodies, which leaves the anticipation with the part that depends on the cue and
+the movement, as an advantage would. The remembered moment is the stored state of the last decision, kept until
+its outcome arrives. It stands where an eligibility trace would, though nothing in it decays or accumulates.
 
-**What the games are.** Contextual bandits with delayed feedback. Each outcome follows one decision, and the
-forecast's sum ends at the next eventful moment, so nothing is valued or planned beyond one step of the event
+**What the games are.** Each outcome arrives before the next decision, so in trial time nothing is delayed: the
+delay is a difficulty in ticks, in which the agent is not told when trials begin. With the bite as the reward,
+the cue game is a contextual bandit. The two-need game is a small Markov decision process, because a move changes
+the fullness the next trial starts from; the agent treats it one event at a time. The forecast's sum ends at the
+next eventful moment, so nothing is valued or planned beyond one step of the event
 clock. Experience is reported per body, and the learner sees 32 bodies at once: 2,000 ticks at a delay of 1 are
 32,000 trials of experience.
 
-**What the action is.** A point estimate found by gradient descent on the two preferences' cost (the band's
-cost on the one-tick forecast, and a quadratic cost on the outcome forecast), at the moment of acting, through
-the learned forward mapping (compare Jordan and Rumelhart, 1992). There is no separate
-policy. The mapping from cue to movement lives in the forward weights:
-the input weights from the movement, whose transpose carries the gradient back to the movement, and the
-anticipation's weights. The hindsight error trains both. No noise is added to the movement. Before anything is
-learned, the movements are whatever the random initial weights produce, and the graded outcome is plausibly
-what lets learning start from there ([limits](limits.md)).
+**What the action is.** A point estimate found by gradient descent on the two preferences' cost (the band's cost on
+the one-tick forecast, and a quadratic cost on the outcome forecast), at the moment of acting, through the learned
+forward mapping (compare Jordan and Rumelhart, 1992). It follows the forecast's gradient in the movement, as a
+deterministic policy gradient does (Silver et al., 2014), but at the moment of acting and with no actor. There is no
+separate policy. The mapping from cue to movement lives in the forward weights: the input weights from the movement,
+whose transpose carries the gradient back to the movement, and the anticipation's weights. The hindsight error
+trains both. Nothing is added for exploration: no noise and no bonus. Before anything is learned, the movements are
+whatever the random initial weights produce, and the graded outcome is plausibly what lets learning start from there
+([limits](limits.md)).
 
-**What the information term is.** An exploration bonus that is computed, not sampled. Its uncertainty is built
-from counts of how often each feature of the forecast has been corrected, which is a diagonal form of the
-confidence width that upper-confidence methods use for linear models (Auer, 2002). It differs from those in
-two ways: the bonus is an expected information gain, and it is set against the expected cost that the same
-uncertainty adds to the preference, so the unfamiliar is not always sought.
+**The step sizes.** Each sensed channel's one-tick error is multiplied by the inverse of the running mean square of
+that error, clipped to between 1 and 10, before it trains the one-tick forecast and the first level's input weights.
+The rates themselves are fixed, with no schedule. The hindsight correction's error is weighted the same way, by the
+inverse of its own running mean square, clipped to the same bounds. In these games every one of these precisions but
+sight's sits at the ceiling after a run's first 180 ticks ([results](results.md#where-the-precisions-sat)), so in
+practice the step sizes are mostly a fixed tenfold rate.
 
-**Is it a value?** In the cue game, where more food is always right, the forecast is functionally a one-step
-value, and
-the behavior is the one a reward-maximizing agent would learn. What differs is where the preference enters. The
-weights learn to predict the fullness, and the setpoint is applied only when the agent acts. This is the split
-between prediction and preference that the successor representation makes for states (Dayan, 1993). It predicts
-a property that a cached value does not have: after a change of setpoint, behavior should change before
-anything is relearned. That was not tested. Homeostatic reinforcement learning (Keramati and Gutkin, 2014) also
-derives what is good from an interoceptive variable, but in the other order: there the reward is the reduction
-of a drive, and its value is learned.
+**Is it a value?** In the cue game, where more food is always right, the forecast is functionally a one-step action
+value, and the behavior is the one a reward-maximizing agent would learn. What differs is where the preference
+enters. The weights learn to predict the fullness, and the setpoint is applied only when the agent acts. This is the
+split between prediction and preference that the successor representation makes for states (Dayan, 1993). It
+predicts a property that a cached value does not have: after a change of setpoint, behavior should change before
+anything is relearned. Dosovitskiy and Koltun (2017) make the same split: they predict action-conditioned changes in
+measurements such as health, train them by regression on what happened, apply a goal only at action time, and show
+behavior changing at once when the goal changes at test time. They choose among discrete actions, where this agent
+follows a gradient. Here the change of goal was not tested. Homeostatic reinforcement learning (Keramati and Gutkin,
+2014) also derives what is good from an interoceptive variable, but in the other order: there the reward is the
+reduction of a drive, and its value is learned.
 
 **The delay.** Learning takes more trials at longer delays here ([results](results.md#all-27-runs)). The games
 do not lengthen the gap between trials along with the delay, so they do not test the timescale invariance of
@@ -249,13 +250,15 @@ regression target for one forecast at one remembered state. Hindsight experience
 - Andrychowicz, M., Wolski, F., Ray, A., Schneider, J., Fong, R., Welinder, P., McGrew, B., Tobin, J., Abbeel,
   P., and Zaremba, W. (2017). Hindsight experience replay. *Advances in Neural Information Processing Systems*,
   30. <https://arxiv.org/abs/1707.01495>
-- Auer, P. (2002). Using confidence bounds for exploitation-exploration trade-offs. *Journal of Machine Learning
-  Research*, 3, 397–422.
+- Bogacz, R. (2017). A tutorial on the free-energy framework for modelling perception and learning. *Journal of
+  Mathematical Psychology*, 76, 198–211. <https://doi.org/10.1016/j.jmp.2015.11.003>
 - Brown, H., Adams, R. A., Parees, I., Edwards, M., and Friston, K. (2013). Active inference, sensory
   attenuation and illusions. *Cognitive Processing*, 14(4), 411–427.
   <https://doi.org/10.1007/s10339-013-0571-3>
 - Dayan, P. (1993). Improving generalization for temporal difference learning: the successor representation.
   *Neural Computation*, 5(4), 613–624. <https://doi.org/10.1162/neco.1993.5.4.613>
+- Dosovitskiy, A., and Koltun, V. (2017). Learning to act by predicting the future. *International Conference on
+  Learning Representations*. <https://arxiv.org/abs/1611.01779>
 - Feldman, H., and Friston, K. J. (2010). Attention, uncertainty, and free-energy. *Frontiers in Human
   Neuroscience*, 4, 215. <https://doi.org/10.3389/fnhum.2010.00215>
 - Friston, K. (2010). The free-energy principle: a unified brain theory? *Nature Reviews Neuroscience*, 11,
@@ -264,6 +267,9 @@ regression target for one forecast at one remembered state. Hindsight experience
   ONE*, 4(7), e6421. <https://doi.org/10.1371/journal.pone.0006421>
 - Friston, K. J., Daunizeau, J., Kilner, J., and Kiebel, S. J. (2010). Action and behavior: a free-energy
   formulation. *Biological Cybernetics*, 102(3), 227–260. <https://doi.org/10.1007/s00422-010-0364-z>
+- Friston, K., FitzGerald, T., Rigoli, F., Schwartenbeck, P., O'Doherty, J., and Pezzulo, G. (2016). Active
+  inference and learning. *Neuroscience & Biobehavioral Reviews*, 68, 862–879.
+  <https://doi.org/10.1016/j.neubiorev.2016.06.022>
 - Friston, K., FitzGerald, T., Rigoli, F., Schwartenbeck, P., and Pezzulo, G. (2017). Active inference: a process
   theory. *Neural Computation*, 29(1), 1–49. <https://doi.org/10.1162/NECO_a_00912>
 - Friston, K., Rigoli, F., Ognibene, D., Mathys, C., FitzGerald, T., and Pezzulo, G. (2015). Active inference and
@@ -285,8 +291,8 @@ regression target for one forecast at one remembered state. Hindsight experience
   *Cognitive Science*, 16(3), 307–354. <https://doi.org/10.1207/s15516709cog1603_1>
 - Keramati, M., and Gutkin, B. (2014). Homeostatic reinforcement learning for integrating reward collection and
   physiological stability. *eLife*, 3, e04811. <https://doi.org/10.7554/eLife.04811>
-- MacKay, D. J. C. (1992). Information-based objective functions for active data selection. *Neural
-  Computation*, 4(4), 590–604. <https://doi.org/10.1162/neco.1992.4.4.590>
+- Mathys, C., Daunizeau, J., Friston, K. J., and Stephan, K. E. (2011). A Bayesian foundation for individual
+  learning under uncertainty. *Frontiers in Human Neuroscience*, 5, 39. <https://doi.org/10.3389/fnhum.2011.00039>
 - Montague, P. R., Dayan, P., and Sejnowski, T. J. (1996). A framework for mesencephalic dopamine systems based
   on predictive Hebbian learning. *Journal of Neuroscience*, 16(5), 1936–1947.
   <https://doi.org/10.1523/JNEUROSCI.16-05-01936.1996>
@@ -309,6 +315,9 @@ regression target for one forecast at one remembered state. Hindsight experience
   <https://doi.org/10.7554/eLife.41703>
 - Seth, A. K., and Friston, K. J. (2016). Active interoceptive inference and the emotional brain. *Philosophical
   Transactions of the Royal Society B*, 371(1708), 20160007. <https://doi.org/10.1098/rstb.2016.0007>
+- Silver, D., Lever, G., Heess, N., Degris, T., Wierstra, D., and Riedmiller, M. (2014). Deterministic policy
+  gradient algorithms. *Proceedings of the 31st International Conference on Machine Learning*, PMLR 32(1),
+  387–395. <https://proceedings.mlr.press/v32/silver14.html>
 - Sterling, P. (2012). Allostasis: a model of predictive regulation. *Physiology & Behavior*, 106(1), 5–15.
   <https://doi.org/10.1016/j.physbeh.2011.06.004>
 - Sutton, R. S. (1988). Learning to predict by the methods of temporal differences. *Machine Learning*, 3(1),

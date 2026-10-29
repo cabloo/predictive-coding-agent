@@ -1,6 +1,6 @@
 """Draw the README's summary figure from a results file: the cue game's learning curves at four delays, with the
 hindsight correction on (mean of the three runs) and, where the results file has them, off (the control, one run
-each), for a light and a dark page. The runs without the information term are not drawn.
+each), for a light and a dark page.
 
     python tools/make_summary_figure.py results/acceptance.json docs/summary-light.svg docs/summary-dark.svg
 
@@ -40,7 +40,7 @@ def draw(cells, dst, theme):
     fig, ax = plt.subplots(figsize=(9.0, 4.3))
     fig.patch.set_facecolor(c["surface"])
     ax.set_facecolor(c["surface"])
-    cue = [x for x in cells if x["game"] == "cue" and x["curve"] and x.get("information", True)]
+    cue = [x for x in cells if x["game"] == "cue" and x["curve"]]
     bar = cue[0]["bar"]
     ax.axhline(bar, color=c["muted"], lw=1.0)
     ax.text(205000, bar, " pass bar", va="center", ha="left", color=c["ink2"], fontsize=9, clip_on=False)

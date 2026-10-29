@@ -47,16 +47,16 @@ def test_every_relative_link_resolves(rel):
 def test_the_readme_sends_a_specialist_to_each_deep_page():
     readme = read("README.md")
     for target in ("docs/how-it-works.md#the-movement-is-inferred-not-selected",
-                   "docs/how-it-works.md#the-movement-also-seeks-information",
+                   "docs/how-it-works.md#each-error-is-weighted-by-its-own-precision",
                    "docs/how-it-works.md#the-goal-is-a-preferred-range",
                    "docs/how-it-works.md#the-anticipation-has-a-setpoint-of-its-own",
                    "docs/how-it-works.md#anticipation-corrected-in-hindsight",
                    "docs/equations.md#the-movement", "docs/equations.md#the-two-preferences",
-                   "docs/equations.md#the-information-term",
+                   "docs/equations.md#each-errors-precision",
                    "docs/equations.md#events-outcomes-and-the-hindsight-error",
                    "docs/theory.md#predictive-coding", "docs/theory.md#active-inference",
                    "docs/theory.md#reinforcement-learning", "docs/results.md#the-control",
-                   "docs/results.md#what-the-information-term-costs",
+                   "docs/results.md#all-27-runs",
                    "docs/results.md#how-the-numbers-were-checked", "docs/limits.md",
                    "docs/limits.md#what-is-built-in", "docs/limits.md#what-would-test-it-further",
                    "#for-researchers"):

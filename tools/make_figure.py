@@ -1,5 +1,5 @@
-"""Draw the learning curves in a results file: one panel per game and delay. The runs without the information
-term are not drawn.
+"""Draw the learning curves in a results file: one panel per game and delay. A panel runs to 200,000 ticks, or to
+its longest curve; a dotted vertical line marks where a continued run was joined.
 
     python tools/make_figure.py results/acceptance.json docs/acceptance.svg
 
@@ -19,7 +19,7 @@ ON, OFF, BAR = "#1f6fb5", "#9a9a9a", "#222222"
 
 def main(src, dst):
     with open(src) as fh:
-        cells = [c for c in json.load(fh)["cells"] if c["curve"] and c.get("information", True)]
+        cells = [c for c in json.load(fh)["cells"] if c["curve"]]
     keys = []
     for c in cells:
         if (c["game"], c["delay"]) not in keys:
@@ -30,7 +30,7 @@ def main(src, dst):
                          "axes.spines.top": False, "axes.spines.right": False})
     ncols = min(3, len(keys))
     nrows = math.ceil(len(keys) / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(10 * ncols / 3, 2.25 * nrows + 0.45), sharex=True, sharey=True,
+    fig, axes = plt.subplots(nrows, ncols, figsize=(10 * ncols / 3, 2.25 * nrows + 0.45), sharey=True,
                              squeeze=False)
     for ax in axes.flat[len(keys):]:
         ax.set_visible(False)
@@ -45,7 +45,10 @@ def main(src, dst):
                 ax.plot(t, s, color=OFF, lw=1.0, ls=(0, (4, 2)))
         ax.set_title("%s game, delay %d" % (game, delay), fontsize=9, loc="left")
         ax.set_xscale("log")
-        ax.set_xlim(1000, 200000)
+        ax.set_xlim(1000, max(200000, max(c["curve"][-1][0] for c in group)))
+        for c in group:
+            if c.get("continued_at"):
+                ax.axvline(c["continued_at"], color=BAR, lw=0.8, ls=(0, (1, 2)))
         ax.set_ylim(-0.02, 1.03)
         ax.set_xticks([1000, 10000, 100000])
         ax.set_xticklabels(["1k", "10k", "100k"])

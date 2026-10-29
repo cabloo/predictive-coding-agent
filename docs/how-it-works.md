@@ -14,9 +14,9 @@ relates to predictive coding, active inference and reinforcement learning, see [
 - [The movement is inferred, not selected](#the-movement-is-inferred-not-selected)
 - [Anticipation, corrected in hindsight](#anticipation-corrected-in-hindsight)
 - [The anticipation has a setpoint of its own](#the-anticipation-has-a-setpoint-of-its-own)
-- [The movement also seeks information](#the-movement-also-seeks-information)
+- [Each error is weighted by its own precision](#each-error-is-weighted-by-its-own-precision)
 - [Regulators](#regulators)
-- [The two switches](#the-two-switches)
+- [The switch](#the-switch)
 
 ## The task in detail
 
@@ -60,7 +60,8 @@ One call to `Agent.step` is one tick. In order:
 1. **Prediction error.** The senses are compared with what the previous state forecast for them. The difference
    is the prediction error. (The code's comments call it the surprise.)
 2. **Learning from the last tick.** The forecast made on the previous tick is now known to be right or wrong,
-   so the forecast weights and the input weights that formed the previous state learn from its error.
+   so the forecast weights and the input weights that formed the previous state learn from its error, each
+   sensed channel's error weighted by that channel's own precision.
 3. **Settling, twice.** The new state is found by a relaxation driven by the prediction error, the previous
    state, the movement and the anticipation fed back from the last tick. In the first relaxation the movement is
    inferred, and the second level's prediction is part of the input. It gives the movement. The second, with
@@ -98,8 +99,10 @@ it acts on the movement only.
 ## The input weights learn from the forecast's error
 
 The error is sent back one step through the forecast weights to the units that were active, and each of those
-units changes its input weights by that error times the input it had. A second level of 64 units predicts the
-first level's state in the same way and sends its prediction back down.
+units changes its input weights by that error times the input it had (for the error itself, the error
+without its attention gain). The error is weighted by precision first,
+as for the forecast weights ([below](#each-error-is-weighted-by-its-own-precision)). A second level of 64 units
+predicts the first level's state in the same way, without precision, and sends its prediction back down.
 *(Ideas 4 and 5; [in equations](equations.md#learning-on-every-tick))*
 
 Nothing in the agent is differentiated automatically. Every update is written out by hand, and a test checks
@@ -166,34 +169,38 @@ flowchart LR
     S -->|"sent back one step,<br/>with the remembered inputs"| P["The input weights that formed<br/>the remembered state"]
 ```
 
-- **One more prediction.** One more set of weights reads the state and predicts the anticipation, `a = Ca · z`.
+- **One more prediction.** One more set of weights reads the state and gives the anticipation, `a = Ca · z`: the
+  state's part of the forecast of the change in fullness up to the next eventful moment.
   Its value is fed back into the state on the next tick, through input weights of its own. *(Idea 9)*
 - **Memory holds one moment.** A tick is eventful for a body when its sight or its movement was news: predicted
   neither by the forecast nor by the running average. The fullness is not counted as news. Each body remembers
   its latest eventful moment: the state, the inputs that formed it, and its fullness. The agent is not told
   which ticks matter. In these two games the body does exactly what it is told, so its movement is never news,
-  sight is blank between cues, and the eventful ticks are exactly the cue ticks (a test checks this). At a delay
-  of 0 a cue arrives on every tick, and nearly every tick is eventful. *(Idea 10)*
+  and sight is blank between cues, so no tick between two cues is eventful. Nearly every cue tick is: a cue
+  that the forecast had already partly predicted for that body can fall below the bar, and that body's
+  remembered moment then stays open over two trials. Over the first 30,000 ticks of every run that happened
+  on 2,367 of 8,967,072 cue ticks of a body (0.03%), and none of the 16,952,928 ticks of a body between cues
+  was eventful. At a delay of 0 a cue arrives on every tick, and nearly every tick is
+  eventful. *(Idea 10)*
 - **The outcome is the change in fullness.** Between two eventful moments, each body adds up its changes in
   fullness. The sum is the outcome `G`: the fullness at the next eventful moment minus the fullness at the
   remembered one. It holds what leaked away over the interval and whatever was eaten.
 - **The forecast of an outcome has two parts.** One is a line read from the fullness at the remembered moment,
   `slope × fullness + offset`, fitted across the bodies to the outcomes themselves. It carries what the fullness
-  alone tells, which is mostly the leak and the usual meal. It is a baseline that needs many bodies; one body
-  alone could not fit it. The other part is the anticipation, read from the remembered state. It is left with
-  what the line cannot tell: what this cue and this movement change.
+  alone tells, which is mostly the leak and the usual meal. It is a baseline fitted across the bodies: one body
+  alone could fit only its offset, not its slope. The other part is the anticipation, read from the remembered
+  state. It is left with what the line cannot tell: what this cue and this movement change.
 - **Hindsight sets a target.** When the next eventful moment arrives, the error is `G` minus the line minus
   `a(remembered state)`, with the anticipation read from the remembered state by the weights as they are now.
-  The anticipation's weights step by that error with the delta rule, at three times the forecast's rate and
-  with a limit on the step. The same error, sent back one step, corrects the input weights that formed the
-  remembered state, using the remembered inputs; the input weights from the anticipation take the same step,
-  with the anticipation that was fed in at that moment. The line moves a twentieth of the way toward the
-  least-squares fit of the outcomes, across the bodies that close a moment on that tick. No other weight is
-  corrected.
+  The anticipation's weights step by that error with the delta rule, at three times the forecast's rate,
+  weighted by the error's own precision, and with a limit on the step; where the limit binds, it sets the
+  step's size and the precision does not change it. The same error, sent back one step,
+  corrects the input weights that formed the remembered state, using the remembered inputs and the same
+  precision; the input weights from the anticipation take the same step, with the anticipation that was fed in
+  at that moment. The line moves a twentieth of the way toward the least-squares fit of the outcomes, across
+  the bodies that close a moment on that tick. No other weight is corrected.
 - **What is read when the agent acts.** The remembered moment is never read when the agent acts. Running
-  statistics kept beside it are read instead: how much outcomes vary, how well the forecast predicts them, and,
-  for [the information term](#the-movement-also-seeks-information), how often each unit has been part of a
-  moment that an outcome closed.
+  statistics kept beside it are read instead: how much outcomes vary and how well the forecast predicts them.
 
 "Hindsight" names this one correction. It is not hindsight experience replay, and it is not hindsight credit
 assignment in the sense of Harutyunyan et al. (2019); see [theory.md](theory.md#reinforcement-learning).
@@ -215,69 +222,59 @@ forecast the next change in fullness. Its weight is the one-tick forecast's shar
 The second is the setpoint's error, through the anticipation's weights, multiplied by a fixed gain of 8.
 *(Idea 11; [in equations](equations.md#the-two-preferences))*
 
-## The movement also seeks information
+## Each error is weighted by its own precision
 
-The anticipation is a learned read of the state, corrected one outcome at a time. It can be trusted on the
-kinds of state it has been corrected on, and on others it is a guess. The agent keeps track of which is which,
-and the movement uses it. *(Idea 13; [in equations](equations.md#the-information-term))*
+Some of what the agent senses it can learn to forecast closely, and some it cannot. The agent learns from each
+error in proportion to how reliable that kind of error has been. *(Idea 13;
+[in equations](equations.md#each-errors-precision))*
 
-- **Evidence, one count per unit.** Each time a body's remembered moment is closed by its outcome, the
-  anticipation's weights have seen one more observation. A tick's observations are shared out among the units
-  by how much each unit contributed to the remembered states (its share of their summed squares), and added to
-  the unit's *evidence*. Nothing is ever taken away from it.
-- **The forecast's uncertainty.** From the evidence the agent works out how uncertain the anticipation is at the
-  state it is in now. A state of ordinary size made of units with no evidence is as uncertain as outcomes
-  themselves vary. Each observation of a unit shrinks that unit's share. This is the uncertainty a linear read
-  has about its own weights when it treats them as unknown, independent of each other, and its targets as noisy.
-- **The expected free energy of the outcome.** With an uncertain forecast, the preference for the setpoint has
-  two more consequences, and the movement follows the slope of both. *Expected cost:* an uncertain forecast is
-  expected to miss the setpoint by more, which counts against moving into unfamiliar states. *Information:* the
-  outcome of an unfamiliar state would teach the weights more, which counts for it. No constant is added to
-  balance them. The balance comes from the preference's own spread, which is set by hand: the unfamiliar is
-  sought while the forecast's whole spread, its error plus its uncertainty, is tighter than the spread of the
-  preference, and avoided otherwise.
-- **Read before the movement exists.** Early in the settle there is no movement yet, so there is no state that
-  reflects one. Until a body's movement exists, its uncertainty is read on the state *expected* under a
-  movement of unknown direction, in which each unit's potential is blurred by the size of that unit's own
-  movement weights. Once the movement exists, the read is on the state itself.
-- **One more vote.** The slope is carried to the movement through the same input weights as the lean, and added
-  to it as it is: the lean is smoothed and weighed by the hold, and this vote is neither. So the movement does
-  not descend the sum of the two; it follows both slopes, with different weights. Until memory has closed its
-  first moment the term casts no vote.
+- **One precision per error.** Each sensed channel's one-tick error keeps a running average of its square. Its
+  *precision* is the inverse of that average: large for a channel the forecast usually gets right, small for one
+  it usually misses. Memory's error at the moments it closes has one precision of its own, kept the same way.
+- **It sets how much is learned.** When a weight learns from an error, the error is first multiplied by its
+  precision. A channel that is usually well forecast is learned from up to ten times as fast as its base rate; one
+  that is usually missed by a unit or more is learned from at the base rate. That holds for the forecast weights,
+  the input weights of the first level (from the error, the movement, the last state and the anticipation) and
+  memory's corrections of the anticipation's weights and of the input weights. The fit of the line, the second
+  level, the thresholds and the weights that learn the forecast's variance take no precision.
+- **It does not set how the state settles.** The errors that drive the state are not multiplied by precision,
+  and the movement is not affected by it except through what the weights have learned.
+- **Read before the error it weights.** On each tick the precision is read from the average as it stood before
+  this tick's error was added, so an error never sets its own weight. A channel's first error is weighted at 1
+  and starts the average.
+- **Kept between 1 and 10.** The inverse of an average squared error is the precision that the textbook
+  free-energy treatment of a Gaussian error gives, and it is used as it is, inside two bounds set by hand. The
+  floor of 1 keeps a poorly forecast channel at its base rate. The ceiling is 10, and lower if
+  the forecast's or the input weights' learning rate is above 0.1, so that neither rate, times its precision,
+  exceeds 1. (Memory's correction of the
+  anticipation runs at three times that rate and has a limit on its step of its own.)
+- **Where it sits in these games.** The errors of the fullness, its change and memory are small in the units the
+  games use, so their precisions sit at the ceiling: from their second use for the change and memory, and after its
+  first 130 to 180 ticks for the fullness. (The movement is copied, not forecast, so its error is zero and its
+  precision scales no step.) Sight's error is large on cue ticks and near zero between them, and one precision
+  covers every tick, so it follows how often a cue is shown: about 2 at a delay of 0, near the ceiling at a delay of
+  4 and at it from 8 ([results](results.md#where-the-precisions-sat)). In practice, then, precision acts here mostly
+  as a tenfold rate.
 
-This is the only thing in the agent that makes it try something for what it would learn. It is not noise: the
-vote is a deterministic function of the state and of what the weights have been corrected on.
-
-In the two games here the agent does not need it. The same agent without this term masters every game as well,
-with less than a third of the time outside the band on the way and fewer dips after mastery
-([results](results.md#what-the-information-term-costs)). The term is part of the agent
-because without it nothing in the agent seeks information.
+Nothing global sets how fast the agent learns: each precision scales only the errors it is estimated from, and the
+base rates are fixed.
 
 ## Regulators
 
-Five regulators keep learning stable *(Idea 12; [in equations](equations.md#gains-and-running-statistics))*:
+Four regulators keep learning stable *(Idea 12; [in equations](equations.md#gains-and-running-statistics))*:
 
 - an attention gain (1 to 10) on the prediction error of inputs whose error would change the agent's other
-  forecasts (it is not an estimate of precision, and it is fixed at 1 for the fullness);
-- one learning-rate gate (1 to 10) that opens when the outcome forecast's error is far from its usual size, in
-  either direction. The first level's input weights, in their every-tick step, take one side of it only: their
-  rate rises while that error is falling below its usual size, when the agent is improving, and stays at its
-  base value when the error rises;
+  forecasts (it is not an estimate of precision, and it is fixed at 1 for the fullness and its change);
 - a hold, set per body on each tick, that keeps up to 90% of the first level's previous potentials through
   ticks with smaller prediction errors than usual;
 - first-level thresholds that weigh each tick by the size of its prediction errors;
-- a limit on what one eventful moment can do to the three running averages of the outcome forecast's squared
-  error: each takes a moment's sample at no more than 10 times its own value, so a single wild outcome cannot
-  wipe out the forecast's measured skill.
+- a limit on what one eventful moment can do to the running average of the outcome forecast's squared error:
+  it takes a moment's sample at no more than 10 times its own value, so a single wild outcome cannot wipe out
+  the forecast's measured skill.
 
-## The two switches
+## The switch
 
 Switching the hindsight correction off is one argument, `Agent(..., hindsight=False)`. Everything else stays the
 same: memory still records moments and outcomes, but corrects no weight, so the anticipation's weights and the
-line stay at zero and the second preference has nothing to act through. The information term then casts no vote
-either, because no evidence is ever added. The learning-rate gate keeps running, on the size of the outcomes
-themselves. [The control](results.md#the-control) says what that agent does and does not show.
-
-Switching the information term off is `Agent(..., information=False)`. The movement then follows the lean alone,
-and no evidence is kept. Nothing else changes.
-[What the information term costs](results.md#what-the-information-term-costs) compares the two.
+line stay at zero and the second preference has nothing to act through. Memory's precision is still kept, and
+no weight takes it. [The control](results.md#the-control) says what that agent does and does not show.

@@ -76,75 +76,62 @@ def test_with_hindsight_off_the_anticipation_stays_at_zero():
     assert float(agent.Ca.abs().max()) == 0.0 and float(agent.from_level.abs().max()) == 0.0
     assert float(agent.ant.abs().max()) == 0.0
     assert agent.outcome_stats is not None            # memory still records outcomes
-    assert float(agent.evidence.abs().max()) == 0.0 and agent.evidence_power is None    # and no evidence is added
-    assert agent.info["information_vote"] == 0.0
 
 
-def test_each_closing_body_is_one_observation():
-    """The evidence grows by one for every remembered moment that an outcome closes, shared out among the units."""
-    agent, game = make(delay=0)
-    closings, seen = 0.0, 0.0
-    for _ in range(60):
-        had = agent.mem_has.clone() if agent._B else None
-        before = float(agent.evidence.sum())
-        game.step(agent.step(game.extero(), game.proprio(), game.intero()))
-        added = float(agent.evidence.sum()) - before
-        assert added >= 0.0                           # nothing is ever taken away
-        assert abs(added - round(added)) < 1e-3       # a whole number of observations per tick
-        assert round(added) <= (int(had.sum()) if had is not None else 0)   # no more than the moments that were open
-        closings += round(added)
-        seen += added
-    assert closings > 0 and agent.evidence_power > 0.0
-    assert float(agent.evidence.min()) >= 0.0
+def test_the_precision_ceiling_follows_the_learning_rates():
+    assert make()[0].precision_max == 10.0
+    assert Agent(2, 2, 1, forecast_lr=0.25, perception_lr=0.05).precision_max == 4.0
+    with pytest.raises(ValueError):
+        Agent(2, 2, 1, forecast_lr=1.5)
 
 
-def test_the_information_term_votes_once_memory_has_closed_a_moment():
-    agent, game = make()
-    votes = []
-    for _ in range(80):
-        game.step(agent.step(game.extero(), game.proprio(), game.intero()))
-        votes.append((agent.evidence_power is not None, agent.info["information_vote"]))
-    assert all(v == 0.0 for known, v in votes if not known)
-    assert any(v > 0.0 for known, v in votes if known)
-
-
-def test_with_the_information_term_off_no_evidence_is_kept():
-    agent, game = make(information=False)
-    play(agent, game, 150)
-    assert agent.evidence is None and agent.evidence_power is None
-    assert agent.info["information_vote"] == 0.0
-    assert float(agent.Ca.abs().max()) > 0.0          # hindsight still corrects the anticipation
-    with_term, _ = make()
-    assert with_term.state_dict()["evidence"] is not None and agent.state_dict()["evidence"] is None
-    with pytest.raises(ValueError):                   # a checkpoint without evidence cannot start one that needs it
-        with_term.load_state_dict(agent.state_dict())
-
-
-def test_the_two_agents_part_ways_only_after_the_first_closing():
-    """With and without the information term the movements are equal until the term has something to read."""
-    a, ga = make()
-    b, gb = make(information=False)
-    same = []
-    for _ in range(60):
-        known = a.evidence_power is not None
-        ca = a.step(ga.extero(), ga.proprio(), ga.intero())
-        cb = b.step(gb.extero(), gb.proprio(), gb.intero())
-        ga.step(ca)
-        gb.step(cb)
-        same.append((known, bool(torch.equal(ca, cb))))
-    assert all(eq for known, eq in same if not known)
-    assert not all(eq for _, eq in same)
-
-
-def test_the_gate_for_the_input_weights_takes_the_falling_side_only():
+def test_a_channels_precision_is_the_inverse_of_its_running_mean_square():
     agent, _ = make()
-    assert agent._gate_values() == (1.0, 1.0)         # before any outcome
-    agent.gate_fast, agent.gate_slow = 2.0, 1.0       # the recent error is twice the usual: only the full gate opens
-    full, falling = agent._gate_values()
-    assert abs(full - 10.0) < 1e-6 and falling == 1.0
-    agent.gate_fast, agent.gate_slow = 0.5, 1.0       # the recent error is half the usual: both open
-    full, falling = agent._gate_values()
-    assert full == falling and abs(full - 5.0) < 1e-6
+    n = agent.n_s
+    first = agent._channel_precision(torch.full((n,), 0.04))
+    assert torch.equal(first, torch.ones(n))          # before any sample, every precision is 1
+    big = agent._channel_precision(torch.full((n,), 100.0))
+    assert torch.allclose(big, torch.full((n,), 10.0))   # read before this error enters: 1 / 0.04, clipped to 10
+    ms = float(agent.error_ms[0])
+    assert ms > 0.04                                 # the large error has now entered the running mean square
+    after = agent._channel_precision(torch.full((n,), 100.0))
+    assert torch.allclose(after, torch.full((n,), min(10.0, max(1.0, 1.0 / ms))))
+
+
+def test_a_noisy_channel_is_weighed_less_than_a_quiet_one():
+    agent, _ = make()
+    n = agent.n_s
+    e2 = torch.full((n,), 0.01)
+    e2[0] = 4.0
+    for _ in range(200):
+        pi = agent._channel_precision(e2)
+    assert abs(float(pi[0]) - 1.0) < 1e-6             # its mean square is above 1, so its precision is the floor
+    assert abs(float(pi[1]) - 10.0) < 1e-6            # a mean square of 0.01 asks 100, held at the ceiling
+
+
+def test_the_closing_precision_reads_the_surprise_before_it():
+    agent, _ = make()
+    agent._closing_fold(0.5)
+    assert agent.closing_precision == 1.0 and agent.closing_ms == 0.5   # the first closing has weight 1
+    agent._closing_fold(1000.0)
+    assert abs(agent.closing_precision - 2.0) < 1e-9  # 1 / 0.5, not moved by the large surprise it is weighing
+    assert agent.closing_ms > 0.5
+
+
+@pytest.mark.parametrize("cls", [CueGame, TwoNeedGame])
+def test_every_precision_stays_between_one_and_its_ceiling(cls):
+    agent, game = make(cls)
+    seen = []
+    for _ in range(150):
+        game.step(agent.step(game.extero(), game.proprio(), game.intero()))
+        if "sight_precision" in agent.info:            # set from the first tick that has a forecast to learn from
+            seen.append((agent.info["sight_precision"], agent.info["closing_precision"]))
+    assert len(seen) >= 149
+    assert agent.closing_ms is not None              # memory closed at least one moment
+    for sight, closing in seen:
+        assert 1.0 <= sight <= agent.precision_max and 1.0 <= closing <= agent.precision_max
+    pi = (1.0 / agent.error_ms.clamp_min(1e-12)).clamp(1.0, agent.precision_max)
+    assert float(pi.max()) > float(pi.min())         # the channels are not all weighted alike
 
 
 def test_a_checkpoint_restores_the_weights():
@@ -152,11 +139,11 @@ def test_a_checkpoint_restores_the_weights():
     play(agent, game, 60)
     other, _ = make(seed=9)
     other.load_state_dict(agent.state_dict())
-    for k in WEIGHTS + ("skill", "evidence"):
+    for k in WEIGHTS + ("skill", "error_ms"):
         assert torch.equal(getattr(agent, k), getattr(other, k)), k
-    assert other.evidence_power == agent.evidence_power
     assert all(torch.equal(a, b) for a, b in zip(agent.theta, other.theta))
-    assert other.gate_fast == agent.gate_fast and other.gate_slow == agent.gate_slow
+    assert other.closing_ms == agent.closing_ms and other.closing_precision == agent.closing_precision
+    assert other.ant_power == agent.ant_power
 
 
 def test_a_checkpoint_of_another_size_is_refused():
@@ -174,9 +161,7 @@ def test_wrong_input_shapes_are_refused():
         agent.step(game.extero()[0], game.proprio(), game.intero())
     with pytest.raises(ValueError):
         Agent(2, 2, 1, band_lo=1.0, band_hi=0.5)
-    with pytest.raises(ValueError):
-        Agent(2, 2, 1, move_delay=0)                  # the information term reads a state that has begun to settle
-    Agent(2, 2, 1, move_delay=0, information=False)
+    Agent(2, 2, 1, move_delay=0)
     with pytest.raises(ValueError):
         Agent(2, 2, 1, move_delay=40)
 
